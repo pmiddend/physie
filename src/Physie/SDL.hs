@@ -3,22 +3,20 @@ module Physie.SDL(
   , withWindow
   , withRenderer
   , drawLines
+  , isQuitEvent
   ) where
 
 import Control.Applicative((<$>))
 import           Control.Exception      (bracket, bracket_)
-import           Data.Function          (($))
-import           Data.Int               (Int)
-import           Data.String            (String)
+import           Graphics.UI.SDL.Events     (Event (..), EventData (..))
+import           Graphics.UI.SDL.Keysym     (Keysym (..),
+                                             Scancode (Escape))
 import           Graphics.UI.SDL.Image  as SDLImage
 import Data.Vector.Storable(fromList)
 import qualified Graphics.UI.SDL.Render as SDLR
 import qualified Graphics.UI.SDL.Rect as SDLRect
 import qualified Graphics.UI.SDL.Types  as SDLT
 import qualified Graphics.UI.SDL.Video  as SDLV
-import           Prelude                (Num, const, error, fromEnum,
-                                         fromIntegral, undefined, (+), (-))
-import           System.IO              (IO)
 import Linear.V2(V2(..))
 
 withImgInit :: IO a -> IO a
@@ -50,3 +48,8 @@ withRenderer window screenWidth screenHeight callback =
 
 drawLines :: SDLT.Renderer -> [V2 Int] -> IO ()
 drawLines renderer ls = SDLR.renderDrawLines renderer (fromList $ (\(V2 x y) -> SDLRect.Point x y) <$> ls)
+
+isQuitEvent :: Event -> Bool
+isQuitEvent (Event _ Quit) = True
+isQuitEvent (Event _ (Keyboard _ _ _ (Keysym sc _ _))) = sc == Escape
+isQuitEvent _ = False
