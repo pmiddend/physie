@@ -16,7 +16,6 @@ import Control.Lens.TH(makeLenses)
 import Control.Monad(msum)
 import Control.Applicative((<$>),(<*>))
 import Data.Maybe(fromJust)
-import Data.Distributive(distribute)
 
 data Rectangle = Rectangle Float Float
 
@@ -49,7 +48,7 @@ rectangleLines (V2 x y) rot (Rectangle w h) = zipWith Line <*> (tail . cycle) $ 
         r01 = -(sin rot)
         r10 = sin rot
         r11 = (cos rot)
-        rmatrix = distribute $ V3 (V3 r00 r01 (x-r00 * x - r01 * y)) (V3 r10 r11 (y - r10 * x - r11 * y)) (V3 0 0 1)
+        rmatrix = V3 (V3 r00 r01 (x-r00 * x - r01 * y)) (V3 r10 r11 (y - r10 * x - r11 * y)) (V3 0 0 1)
         to3 (V2 x' y') = V3 x' y' 1
         to2 (V3 x' y' _) = V2 x' y'
         rpoints = (to2 . (rmatrix !*) . to3) <$> points
@@ -95,8 +94,7 @@ mainLoop renderer angle = do
   SDLR.setRenderDrawColor renderer 0 0 0 255
   SDLR.renderClear renderer
   SDLR.setRenderDrawColor renderer 255 255 255 255
-  mapM_ (drawLine renderer) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> (rectangleLines (V2 200 200) angle (Rectangle 50 100)))
-  --drawLines renderer [V2 100 100,V2 100 200]
+  mapM_ (drawLine renderer) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> (rectangleLines (V2 200 250) angle (Rectangle 50 100)))
   SDLR.renderPresent renderer
   if any isQuitEvent events
      then return ()

@@ -28,7 +28,6 @@ executable physie
                      , lens
                      , vector
                      , monad-loops
-                     , distributive
   -- hs-source-dirs:      
   default-language:    Haskell2010
   ghc-options: -Wall
