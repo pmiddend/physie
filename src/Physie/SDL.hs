@@ -3,6 +3,7 @@ module Physie.SDL(
   , withWindow
   , withRenderer
   , drawLines
+  , drawLine
   , isQuitEvent
   ) where
 
@@ -45,6 +46,9 @@ withRenderer window screenWidth screenHeight callback =
   in bracket acquireResource releaseResource $ \renderer -> do
     SDLR.renderSetLogicalSize renderer (fromIntegral screenWidth) (fromIntegral screenHeight)
     callback renderer
+
+drawLine :: SDLT.Renderer -> (V2 Int,V2 Int) -> IO ()
+drawLine renderer (V2 x1 y1,V2 x2 y2) = SDLR.renderDrawLine renderer (fromIntegral x1) (fromIntegral y1) (fromIntegral x2) (fromIntegral y2)
 
 drawLines :: SDLT.Renderer -> [V2 Int] -> IO ()
 drawLines renderer ls = SDLR.renderDrawLines renderer (fromList $ (\(V2 x y) -> SDLRect.Point x y) <$> ls)
