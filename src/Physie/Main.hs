@@ -10,12 +10,14 @@ import Control.Lens((^.))
 import Linear.V2(V2(..),perp)
 import Linear.V3(V3(..))
 import Linear.Matrix((!*),inv33)
-import Linear.Vector((*^))
-import Linear.Metric(dot,signorm)
+import Linear.Vector((*^),(^*))
+import Linear.Metric(dot,signorm,quadrance)
 import Control.Lens.TH(makeLenses)
 import Control.Monad(msum)
 import Control.Applicative((<$>),(<*>))
 import Data.Maybe(fromJust)
+import Data.List(minimumBy)
+import Data.Function(on)
 
 data Rectangle = Rectangle Float Float
 
@@ -33,7 +35,7 @@ $(makeLenses ''RigidBody)
 data Collision = Collision {
     _collContactPoint :: V2 Float
   , _collNormal :: V2 Float
-  }
+  } deriving(Show)
 
 $(makeLenses ''Collision)
 
@@ -88,13 +90,50 @@ screenWidth = 640
 screenHeight :: Int
 screenHeight = 480
 
+drawBody :: SDLT.Renderer -> RigidBody -> IO ()
+drawBody r b = mapM_ (drawLine r) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> (rectangleLines (b ^. bodyPosition) (b ^. bodyRotation) (b ^. bodyShape)))
+
+toIntPoint (V2 x y) = V2 (floor x) (floor y)
+
+minmax :: Ord a => [a] -> (a,a)
+minmax ls = (minimum ls,maximum ls)
+
+-- Courtesy of http://elancev.name/oliver/2D%20polygon.htm
+data AxisSeparation = Separates | Overlaps (V2 Float) deriving Eq
+
+satIntersects :: [Line] -> [Line] -> Maybe (V2 Float)
+satIntersects a b = let axes = concatMap (map (perp . lineToVector)) [a,b]
+                        separationData = map (separates a b) axes
+                    in if any (== Separates) separationData
+                       then Nothing
+                       else Just $ minimumBy (compare `on` quadrance) $ concatMap (\x -> case x of Separates -> []; Overlaps x -> [x]) separationData
+  where lineToVector (Line x y) = y - x
+        calculateInterval axis = minmax . map ((axis `dot`) . lineToVector)
+        separates x y axis = let (mina,maxa) = calculateInterval axis x
+                                 (minb,maxb) = calculateInterval axis y
+                             in if mina > maxb || minb > maxa
+                                then Separates
+                                else let d0 = maxa - minb
+                                         d1 = maxb - mina
+                                         depth = if d0 < d1 then d0 else d1
+                                     in Overlaps $ axis ^* (depth / (quadrance axis))
+
 mainLoop :: SDLT.Renderer -> Float -> IO ()
 mainLoop renderer angle = do
   events <- unfoldM pollEvent
   SDLR.setRenderDrawColor renderer 0 0 0 255
   SDLR.renderClear renderer
   SDLR.setRenderDrawColor renderer 255 255 255 255
-  mapM_ (drawLine renderer) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> (rectangleLines (V2 200 250) angle (Rectangle 50 100)))
+  let body1 = RigidBody (V2 100 100) 0.1 (V2 0 0) 0 Nothing (Rectangle 100 100)
+      body2 = RigidBody (V2 150 150) 2.5 (V2 0 0) 0 Nothing (Rectangle 50 50)
+  drawBody renderer body1
+  drawBody renderer body2
+  let collision = detectCollision body1 body2
+  SDLR.setRenderDrawColor renderer 255 0 0 255
+  case collision of
+   Nothing -> return ()
+   Just (Collision contactPoint normal) ->
+     drawLine renderer (toIntPoint contactPoint,toIntPoint $ contactPoint + (normal ^* 10))
   SDLR.renderPresent renderer
   if any isQuitEvent events
      then return ()
@@ -102,6 +141,7 @@ mainLoop renderer angle = do
 
 main :: IO ()
 main = do
+    print $ detectCollision (RigidBody (V2 0 0) 0.1 (V2 0 0) 0 Nothing (Rectangle 10 10)) (RigidBody (V2 5 5) 0 (V2 0 0) 0 Nothing (Rectangle 5 5))
     withImgInit $ do
       withWindow "racie 0.0.1.1" $ \window -> do
         withRenderer window screenWidth screenHeight (\r -> mainLoop r 0)
