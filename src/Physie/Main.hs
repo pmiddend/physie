@@ -41,8 +41,8 @@ $(makeLenses ''Collision)
 
 data Line = Line (V2 Float) (V2 Float)
 
-rectangleLines :: V2 Float -> Float -> Rectangle -> [Line]
-rectangleLines (V2 x y) rot (Rectangle w h) = zipWith Line <*> (tail . cycle) $ rpoints
+rectanglePoints :: V2 Float -> Float -> Rectangle -> [V2 Float]
+rectanglePoints (V2 x y) rot (Rectangle w h) = (to2 . (rmatrix !*) . to3) <$> points
   where hw = w/2
         hh = h/2
         points = [V2 (x-hw) (y-hh),V2 (x-hw) (y+hh),V2 (x+hw) (y+hh),V2 (x+hw) (y-hh)]
@@ -53,7 +53,9 @@ rectangleLines (V2 x y) rot (Rectangle w h) = zipWith Line <*> (tail . cycle) $ 
         rmatrix = V3 (V3 r00 r01 (x-r00 * x - r01 * y)) (V3 r10 r11 (y - r10 * x - r11 * y)) (V3 0 0 1)
         to3 (V2 x' y') = V3 x' y' 1
         to2 (V3 x' y' _) = V2 x' y'
-        rpoints = (to2 . (rmatrix !*) . to3) <$> points
+
+rectangleLines :: V2 Float -> Float -> Rectangle -> [Line]
+rectangleLines pos rot rect = zipWith Line <*> (tail . cycle) $ rectanglePoints pos rot rect
 
 cross2 :: V2 Float -> V2 Float -> Float
 cross2 (V2 x1 y1) (V2 x2 y2) = x1 * y2 - y1 * x2
@@ -82,7 +84,13 @@ lineNormal :: Line -> V2 Float
 lineNormal (Line a b) = perp .  signorm $ b - a
 
 detectCollision :: RigidBody -> RigidBody -> Maybe Collision
-detectCollision b1 b2 = msum $ (((uncurry Collision) <$>) . extractMaybe) <$> [(lineIntersection 0.001 x y,lineNormal x) | x <- rectangleLines (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape),y <- rectangleLines (b2 ^. bodyPosition) (b2 ^. bodyRotation) (b2 ^. bodyShape)]
+detectCollision b1 b2 = msum $ (((uncurry Collision) <$>) . extractMaybe) <$> [(lineIntersection 0.001 x y,lineNormal x) | x <- bodyLines b1,y <- bodyLines b2]
+
+bodyLines :: RigidBody -> [Line]
+bodyLines b1 = rectangleLines (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape)
+
+bodyPoints :: RigidBody -> [V2 Float]
+bodyPoints b1 = rectanglePoints (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape)
 
 screenWidth :: Int
 screenWidth = 640
@@ -91,15 +99,21 @@ screenHeight :: Int
 screenHeight = 480
 
 drawBody :: SDLT.Renderer -> RigidBody -> IO ()
-drawBody r b = mapM_ (drawLine r) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> (rectangleLines (b ^. bodyPosition) (b ^. bodyRotation) (b ^. bodyShape)))
+drawBody r b = mapM_ (drawLine r) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> (bodyLines b))
 
 toIntPoint (V2 x y) = V2 (floor x) (floor y)
 
 minmax :: Ord a => [a] -> (a,a)
 minmax ls = (minimum ls,maximum ls)
 
+satIntersectsBodies :: RigidBody -> RigidBody -> Maybe (V2 Float)
+satIntersectsBodies a b = case satIntersects (bodyLines a) (bodyLines b) of
+  Nothing -> Nothing
+  Just p -> Just $ if ((a ^. bodyPosition) - (b ^. bodyPosition)) `dot` p < 0
+                   then negate p
+                   else p
+
 -- Courtesy of http://elancev.name/oliver/2D%20polygon.htm
---data AxisSeparation = Separates | Overlaps (V2 Float) deriving Eq
 satIntersects :: [Line] -> [Line] -> Maybe (V2 Float)
 satIntersects a b = let axes = concatMap (map (perp . lineToVector)) [a,b]
                         separationData = map (separates a b) axes
@@ -117,6 +131,15 @@ satIntersects a b = let axes = concatMap (map (perp . lineToVector)) [a,b]
                                          depth = if d0 < d1 then d0 else d1
                                      in Just $ axis ^* (depth / (quadrance axis))
 
+findSupportPoints :: V2 Float -> [V2 Float] -> [V2 Float]
+findSupportPoints n vs = let dots = (`dot` n) <$> vs
+                             mindot = minimum dots
+                         in take 2 . map snd . filter (\(d,v) -> d < mindot + 0.001) $ zip dots vs
+
+findContactPoint :: [V2 Float] -> [V2 Float] -> V2 Float
+findContactPoint [x] [a,b] = x
+findContactPoint [a,b] [x] =
+
 mainLoop :: SDLT.Renderer -> Float -> IO ()
 mainLoop renderer angle = do
   events <- unfoldM pollEvent
@@ -127,12 +150,19 @@ mainLoop renderer angle = do
       body2 = RigidBody (V2 150 150) 2.5 (V2 0 0) 0 Nothing (Rectangle 50 50)
   drawBody renderer body1
   drawBody renderer body2
-  let collision = detectCollision body1 body2
+  let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
+  let n2 = signorm $ fromJust $ satIntersectsBodies body2 body1
+  let sp1 = findSupportPoints n1 (bodyPoints body1)
+  let sp2 = findSupportPoints n2 (bodyPoints body2)
   SDLR.setRenderDrawColor renderer 255 0 0 255
-  case collision of
-   Nothing -> return ()
-   Just (Collision contactPoint normal) ->
-     drawLine renderer (toIntPoint contactPoint,toIntPoint $ contactPoint + (normal ^* 10))
+  mapM_ (\(x,y) -> drawLine renderer (toIntPoint x,toIntPoint y)) $ ((\p -> (p,p+(10 *^ n1))) <$> sp1) ++ ((\p -> (p,p+(10 *^ n2))) <$> sp2)
+  --drawLine renderer (toIntPoint sp2,toIntPoint (sp2 + 10 *^ n2))
+--  let collision = detectCollision body1 body2
+--  SDLR.setRenderDrawColor renderer 255 0 0 255
+--  case collision of
+--   Nothing -> return ()
+--   Just (Collision contactPoint normal) ->
+--     drawLine renderer (toIntPoint contactPoint,toIntPoint $ contactPoint + (normal ^* 10))
   SDLR.renderPresent renderer
   if any isQuitEvent events
      then return ()
@@ -140,7 +170,18 @@ mainLoop renderer angle = do
 
 main :: IO ()
 main = do
-    print $ detectCollision (RigidBody (V2 0 0) 0.1 (V2 0 0) 0 Nothing (Rectangle 10 10)) (RigidBody (V2 5 5) 0 (V2 0 0) 0 Nothing (Rectangle 5 5))
-    withImgInit $ do
-      withWindow "racie 0.0.1.1" $ \window -> do
-        withRenderer window screenWidth screenHeight (\r -> mainLoop r 0)
+  let body1 = RigidBody (V2 100 100) 0.1 (V2 0 0) 0 Nothing (Rectangle 100 100)
+      body2 = RigidBody (V2 150 150) 2.5 (V2 0 0) 0 Nothing (Rectangle 50 50)
+  let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
+  let n2 = signorm $ fromJust $ satIntersectsBodies body2 body1
+  print $ findSupportPoints n1 (bodyPoints body1)
+  print $ findSupportPoints n2 (bodyPoints body2)
+--    print $ detectCollision (RigidBody (V2 0 0) 0.1 (V2 0 0) 0 Nothing (Rectangle 10 10)) (RigidBody (V2 5 5) 0 (V2 0 0) 0 Nothing (Rectangle 5 5))
+ --   print $ setIntersects () ()
+  --let firstLines = bodyLines $ RigidBody (V2 100 100) 0.1 (V2 0 0) 0 Nothing (Rectangle 100 100)
+  --let secondLines = bodyLines $ RigidBody (V2 150 150) 2.5 (V2 0 0) 0 Nothing (Rectangle 50 50)
+  --print $ satIntersects firstLines secondLines
+  --print $ satIntersects secondLines firstLines
+  withImgInit $ do
+    withWindow "racie 0.0.1.1" $ \window -> do
+      withRenderer window screenWidth screenHeight (\r -> mainLoop r 0)
