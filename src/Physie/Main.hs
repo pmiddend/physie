@@ -145,7 +145,7 @@ findContactPoint [a,b] [x] = let av = x - a
                                  ab = b - a
                                  t = clamp 0 1 $ (av `dot` ab) / (ab `dot` ab)
                              in a + t *^ ab
-findContactPoint _ _ = error "not defined"
+findContactPoint [a,b] [x,y] = findContactPoint [a,b] [x]
 
 mainLoop :: SDLT.Renderer -> Float -> IO ()
 mainLoop renderer angle = do
@@ -153,8 +153,8 @@ mainLoop renderer angle = do
   SDLR.setRenderDrawColor renderer 0 0 0 255
   SDLR.renderClear renderer
   SDLR.setRenderDrawColor renderer 255 255 255 255
-  let body1 = RigidBody (V2 100 100) 0.1 (V2 0 0) 0 Nothing (Rectangle 100 100)
-      body2 = RigidBody (V2 150 150) 2.5 (V2 0 0) 0 Nothing (Rectangle 50 50)
+  let body1 = RigidBody (V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
+      body2 = RigidBody (V2 150 150) 0 (V2 0 0) 0 Nothing (Rectangle 50 50)
   drawBody renderer body1
   drawBody renderer body2
   let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
@@ -181,10 +181,11 @@ mainLoop renderer angle = do
 
 main :: IO ()
 main = do
-  let body1 = RigidBody (V2 100 100) 0.1 (V2 0 0) 0 Nothing (Rectangle 100 100)
-      body2 = RigidBody (V2 150 150) 2.5 (V2 0 0) 0 Nothing (Rectangle 50 50)
+  let body1 = RigidBody (V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
+      body2 = RigidBody (V2 150 150) 0 (V2 0 0) 0 Nothing (Rectangle 50 50)
   let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
   let n2 = signorm $ fromJust $ satIntersectsBodies body2 body1
+  print n1
   print $ findSupportPoints n1 (bodyPoints body1)
   print $ findSupportPoints n2 (bodyPoints body2)
 --    print $ detectCollision (RigidBody (V2 0 0) 0.1 (V2 0 0) 0 Nothing (Rectangle 10 10)) (RigidBody (V2 5 5) 0 (V2 0 0) 0 Nothing (Rectangle 5 5))
