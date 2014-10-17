@@ -9,7 +9,7 @@ import Control.Monad.Loops(unfoldM)
 import Control.Lens((^.))
 import Linear.V2(V2(..),perp)
 import Linear.V3(V3(..))
-import Linear.Matrix((!*),inv33)
+import Linear.Matrix((!*))
 import Linear.Vector((*^),(^*))
 import Linear.Metric(dot,signorm,quadrance)
 import Control.Lens.TH(makeLenses)
@@ -134,11 +134,18 @@ satIntersects a b = let axes = concatMap (map (perp . lineToVector)) [a,b]
 findSupportPoints :: V2 Float -> [V2 Float] -> [V2 Float]
 findSupportPoints n vs = let dots = (`dot` n) <$> vs
                              mindot = minimum dots
-                         in take 2 . map snd . filter (\(d,v) -> d < mindot + 0.001) $ zip dots vs
+                         in take 2 . map snd . filter (\(d,_) -> d < mindot + 0.001) $ zip dots vs
+
+clamp :: Ord a => a -> a -> a -> a
+clamp minv maxv = min maxv . max minv
 
 findContactPoint :: [V2 Float] -> [V2 Float] -> V2 Float
-findContactPoint [x] [a,b] = x
-findContactPoint [a,b] [x] =
+findContactPoint [x] [_,_] = x
+findContactPoint [a,b] [x] = let av = x - a
+                                 ab = b - a
+                                 t = clamp 0 1 $ (av `dot` ab) / (ab `dot` ab)
+                             in a + t *^ ab
+findContactPoint _ _ = error "not defined"
 
 mainLoop :: SDLT.Renderer -> Float -> IO ()
 mainLoop renderer angle = do
@@ -154,8 +161,12 @@ mainLoop renderer angle = do
   let n2 = signorm $ fromJust $ satIntersectsBodies body2 body1
   let sp1 = findSupportPoints n1 (bodyPoints body1)
   let sp2 = findSupportPoints n2 (bodyPoints body2)
+  let cp1 = findContactPoint sp1 sp2
+  let cp2 = findContactPoint sp2 sp1
   SDLR.setRenderDrawColor renderer 255 0 0 255
-  mapM_ (\(x,y) -> drawLine renderer (toIntPoint x,toIntPoint y)) $ ((\p -> (p,p+(10 *^ n1))) <$> sp1) ++ ((\p -> (p,p+(10 *^ n2))) <$> sp2)
+  drawLine renderer (toIntPoint cp1,toIntPoint $ cp1 + 10 *^ n1)
+  drawLine renderer (toIntPoint cp2,toIntPoint $ cp2 + 10 *^ n2)
+  --mapM_ (\(x,y) -> drawLine renderer (toIntPoint x,toIntPoint y)) $ ((\p -> (p,p+(10 *^ n1))) <$> sp1) ++ ((\p -> (p,p+(10 *^ n2))) <$> sp2)
   --drawLine renderer (toIntPoint sp2,toIntPoint (sp2 + 10 *^ n2))
 --  let collision = detectCollision body1 body2
 --  SDLR.setRenderDrawColor renderer 255 0 0 255
