@@ -1,61 +1,49 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
-import Physie.SDL(withImgInit,withWindow,withRenderer,drawLine,isQuitEvent)
+import           Control.Applicative    ((<$>), (<*>))
+import           Control.Lens           (view, (^.), _2)
+import           Control.Lens.TH        (makeLenses)
+import           Control.Monad          (msum, unless)
+import           Control.Monad.Loops    (unfoldM)
+import           Data.Function          (on)
+import           Data.List              (maximumBy, minimumBy)
+import           Data.Maybe             (fromJust, isNothing, maybeToList)
+import           Data.Monoid            ((<>))
+import           Data.Ord               (comparing)
+import           Graphics.UI.SDL.Events (pollEvent)
 import qualified Graphics.UI.SDL.Render as SDLR
-import qualified Graphics.UI.SDL.Types as SDLT
-import           Graphics.UI.SDL.Events     (pollEvent)
-import Control.Monad.Loops(unfoldM)
-import Control.Lens((^.))
-import Linear.V2(V2(..),perp)
-import Linear.V3(V3(..))
-import Linear.Matrix((!*))
-import Linear.Vector((*^),(^*))
-import Linear.Metric(dot,signorm,quadrance)
-import Control.Lens.TH(makeLenses)
-import Control.Monad(msum)
-import Control.Applicative((<$>),(<*>))
-import Data.Maybe(fromJust,isNothing,maybeToList)
-import Data.List(minimumBy)
-import Data.Function(on)
-
-data Rectangle = Rectangle Float Float
-
-data RigidBody = RigidBody {
-    _bodyPosition :: V2 Float
-  , _bodyRotation :: Float
-  , _bodyLinearVelocity :: V2 Float
-  , _bodyAngularVelocity :: Float
-  , _bodyMass :: Maybe Float
-  , _bodyShape :: Rectangle
-  }
-
-$(makeLenses ''RigidBody)
-
-data Collision = Collision {
-    _collContactPoint :: V2 Float
-  , _collNormal :: V2 Float
-  } deriving(Show)
-
-$(makeLenses ''Collision)
+import qualified Graphics.UI.SDL.Types  as SDLT
+import           Linear.Matrix          ((!*))
+import           Linear.Metric          (dot, quadrance, signorm)
+import           Linear.V2              (V2 (..), perp, _x, _y)
+import           Linear.V3              (V3 (..))
+import           Linear.Vector          ((*^), (^*))
+import           Physie.SDL             (drawLine, isQuitEvent, withImgInit,
+                                         withRenderer, withWindow)
 
 data Line = Line (V2 Float) (V2 Float)
 
-rectanglePoints :: V2 Float -> Float -> Rectangle -> [V2 Float]
-rectanglePoints (V2 x y) rot (Rectangle w h) = (to2 . (rmatrix !*) . to3) <$> points
-  where hw = w/2
-        hh = h/2
-        points = [V2 (x-hw) (y-hh),V2 (x-hw) (y+hh),V2 (x+hw) (y+hh),V2 (x+hw) (y-hh)]
-        r00 = cos rot
-        r01 = -(sin rot)
-        r10 = sin rot
-        r11 = (cos rot)
-        rmatrix = V3 (V3 r00 r01 (x-r00 * x - r01 * y)) (V3 r10 r11 (y - r10 * x - r11 * y)) (V3 0 0 1)
-        to3 (V2 x' y') = V3 x' y' 1
-        to2 (V3 x' y' _) = V2 x' y'
+lineVector :: Line -> V2 Float
+lineVector (Line a b) = b - a
 
-rectangleLines :: V2 Float -> Float -> Rectangle -> [Line]
-rectangleLines pos rot rect = zipWith Line <*> (tail . cycle) $ rectanglePoints pos rot rect
+lineStart :: Line -> V2 Float
+lineStart (Line a _) = a
+
+lineEnd :: Line -> V2 Float
+lineEnd (Line _ b) = b
+
+boolToList :: Bool -> a -> [a]
+boolToList b a = if b then [a] else []
+
+maximumByNeighbors :: Ord a => (a -> a -> Ordering) -> [a] -> (a,a,a)
+maximumByNeighbors f ls = let cls = cycle ls
+                          in maximumBy (f `on` (view _2)) $ zip3 (drop 2 cls) ls (drop 1 cls)
+
+toIntPoint (V2 x y) = V2 (floor x) (floor y)
+
+minmax :: Ord a => [a] -> (a,a)
+minmax ls = (minimum ls,maximum ls)
 
 cross2 :: V2 Float -> V2 Float -> Float
 cross2 (V2 x1 y1) (V2 x2 y2) = x1 * y2 - y1 * x2
@@ -83,6 +71,43 @@ extractMaybe (Just a,b) = Just (a,b)
 lineNormal :: Line -> V2 Float
 lineNormal (Line a b) = perp .  signorm $ b - a
 
+
+data Rectangle = Rectangle Float Float
+
+data RigidBody = RigidBody {
+    _bodyPosition        :: V2 Float
+  , _bodyRotation        :: Float
+  , _bodyLinearVelocity  :: V2 Float
+  , _bodyAngularVelocity :: Float
+  , _bodyMass            :: Maybe Float
+  , _bodyShape           :: Rectangle
+  }
+
+$(makeLenses ''RigidBody)
+
+data Collision = Collision {
+    _collContactPoint :: V2 Float
+  , _collNormal       :: V2 Float
+  } deriving(Show)
+
+$(makeLenses ''Collision)
+
+rectanglePoints :: V2 Float -> Float -> Rectangle -> [V2 Float]
+rectanglePoints (V2 x y) rot (Rectangle w h) = (to2 . (rmatrix !*) . to3) <$> points
+  where hw = w/2
+        hh = h/2
+        points = [V2 (x-hw) (y-hh),V2 (x-hw) (y+hh),V2 (x+hw) (y+hh),V2 (x+hw) (y-hh)]
+        r00 = cos rot
+        r01 = -(sin rot)
+        r10 = sin rot
+        r11 = (cos rot)
+        rmatrix = V3 (V3 r00 r01 (x-r00 * x - r01 * y)) (V3 r10 r11 (y - r10 * x - r11 * y)) (V3 0 0 1)
+        to3 (V2 x' y') = V3 x' y' 1
+        to2 (V3 x' y' _) = V2 x' y'
+
+rectangleLines :: V2 Float -> Float -> Rectangle -> [Line]
+rectangleLines pos rot rect = zipWith Line <*> (tail . cycle) $ rectanglePoints pos rot rect
+
 detectCollision :: RigidBody -> RigidBody -> Maybe Collision
 detectCollision b1 b2 = msum $ (((uncurry Collision) <$>) . extractMaybe) <$> [(lineIntersection 0.001 x y,lineNormal x) | x <- bodyLines b1,y <- bodyLines b2]
 
@@ -101,10 +126,47 @@ screenHeight = 480
 drawBody :: SDLT.Renderer -> RigidBody -> IO ()
 drawBody r b = mapM_ (drawLine r) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> (bodyLines b))
 
-toIntPoint (V2 x y) = V2 (floor x) (floor y)
+findBestEdge :: [V2 Float] -> V2 Float -> (V2 Float,Line)
+findBestEdge ls n = let (v0,v,v1) = maximumByNeighbors (comparing (n `dot`)) ls
+                    in if (v - v0) `dot` n <= (v - v1) `dot` n
+                       then (v,Line v0 v)
+                       else (v,Line v v1)
 
-minmax :: Ord a => [a] -> (a,a)
-minmax ls = (minimum ls,maximum ls)
+firstClippingOp a b n =
+  let e1 = findBestEdge a n
+      e2 = findBestEdge b n
+      e1Smaller = abs (lineVector (snd e1) `dot` n) <= abs (lineVector (snd e2) `dot` n)
+      ref = if e1Smaller then e1 else e2
+      inc = if e1Smaller then e2 else e1
+      nref = (signorm . lineVector . snd) ref
+      o1 = nref `dot` lineStart (snd ref)
+      cps = clip (lineStart (snd inc)) (lineEnd (snd inc)) nref o1
+  in (cps,nref,ref,e1Smaller)
+
+findContactPoints :: [V2 Float] -> [V2 Float] -> V2 Float -> V2 Float
+findContactPoints a b n =
+  let (cp1,nref,ref,noflip) = firstClippingOp a b n
+  in case cp1 of
+      [cp0] -> cp0
+      [cp0,cp1] ->
+        let o2 = nref `dot` lineEnd (snd ref)
+            cp2 = clip cp0 cp1 (negate nref) (-o2)
+            refNorm = (if noflip then 1 else -1) *^ (V2 (negate $ nref ^. _y) (nref ^. _x))
+            refNormMax = refNorm `dot` fst ref
+        in case cp2 of
+            [cp21] -> cp2
+            [cp21,cp22] -> boolToList (refNorm `dot` cp21 - refNormMax >= 0) cp21 <>
+                           boolToList (refNorm `dot` cp22 - refNormMax >= 0) cp22
+            _ -> error "Clip resulted in invalid number of points"
+      _ -> error "Clip resulted in invalid number of points"
+
+clip :: V2 Float -> V2 Float -> V2 Float -> Float -> [V2 Float]
+clip v1 v2 n o = let d1 = n `dot` v1 - o
+                     d2 = n `dot` v2 - o
+                     e = v2 - v1
+                 in boolToList (d1 >= 0) v1 <>
+                    boolToList (d2 >= 0) v2 <>
+                    boolToList (d1 * d2 < 0) (v1 + (d1 / (d1 - d2)) *^ e)
 
 satIntersectsBodies :: RigidBody -> RigidBody -> Maybe (V2 Float)
 satIntersectsBodies a b = case satIntersects (bodyLines a) (bodyLines b) of
@@ -175,9 +237,7 @@ mainLoop renderer angle = do
 --   Just (Collision contactPoint normal) ->
 --     drawLine renderer (toIntPoint contactPoint,toIntPoint $ contactPoint + (normal ^* 10))
   SDLR.renderPresent renderer
-  if any isQuitEvent events
-     then return ()
-     else mainLoop renderer (angle + 0.001)
+  unless (any isQuitEvent events) $ mainLoop renderer (angle + 0.001)
 
 main :: IO ()
 main = do
@@ -194,6 +254,6 @@ main = do
   --let secondLines = bodyLines $ RigidBody (V2 150 150) 2.5 (V2 0 0) 0 Nothing (Rectangle 50 50)
   --print $ satIntersects firstLines secondLines
   --print $ satIntersects secondLines firstLines
-  withImgInit $ do
-    withWindow "racie 0.0.1.1" $ \window -> do
-      withRenderer window screenWidth screenHeight (\r -> mainLoop r 0)
+  withImgInit $
+    withWindow "racie 0.0.1.1" $ \window ->
+      withRenderer window screenWidth screenHeight (`mainLoop` 0)
