@@ -11,6 +11,7 @@ import           Data.List              (maximumBy, minimumBy)
 import           Data.Maybe             (fromJust, isNothing, maybeToList)
 import           Data.Monoid            ((<>))
 import           Data.Ord               (comparing)
+import           Debug.Trace            (traceShowId)
 import           Graphics.UI.SDL.Events (pollEvent)
 import qualified Graphics.UI.SDL.Render as SDLR
 import qualified Graphics.UI.SDL.Types  as SDLT
@@ -22,7 +23,7 @@ import           Linear.Vector          ((*^), (^*))
 import           Physie.SDL             (drawLine, isQuitEvent, withImgInit,
                                          withRenderer, withWindow)
 
-data Line = Line (V2 Float) (V2 Float)
+data Line = Line (V2 Float) (V2 Float) deriving Show
 
 lineVector :: Line -> V2 Float
 lineVector (Line a b) = b - a
@@ -34,11 +35,11 @@ lineEnd :: Line -> V2 Float
 lineEnd (Line _ b) = b
 
 boolToList :: Bool -> a -> [a]
-boolToList b a = if b then [a] else []
+boolToList b a = [a | b]
 
 maximumByNeighbors :: Ord a => (a -> a -> Ordering) -> [a] -> (a,a,a)
 maximumByNeighbors f ls = let cls = cycle ls
-                          in maximumBy (f `on` (view _2)) $ zip3 (drop 2 cls) ls (drop 1 cls)
+                          in maximumBy (f `on` view _2) $ zip3 (drop (length ls - 1) cls) ls (drop 1 cls)
 
 toIntPoint (V2 x y) = V2 (floor x) (floor y)
 
@@ -132,34 +133,6 @@ findBestEdge ls n = let (v0,v,v1) = maximumByNeighbors (comparing (n `dot`)) ls
                        then (v,Line v0 v)
                        else (v,Line v v1)
 
-firstClippingOp a b n =
-  let e1 = findBestEdge a n
-      e2 = findBestEdge b n
-      e1Smaller = abs (lineVector (snd e1) `dot` n) <= abs (lineVector (snd e2) `dot` n)
-      ref = if e1Smaller then e1 else e2
-      inc = if e1Smaller then e2 else e1
-      nref = (signorm . lineVector . snd) ref
-      o1 = nref `dot` lineStart (snd ref)
-      cps = clip (lineStart (snd inc)) (lineEnd (snd inc)) nref o1
-  in (cps,nref,ref,e1Smaller)
-
-findContactPoints :: [V2 Float] -> [V2 Float] -> V2 Float -> V2 Float
-findContactPoints a b n =
-  let (cp1,nref,ref,noflip) = firstClippingOp a b n
-  in case cp1 of
-      [cp0] -> cp0
-      [cp0,cp1] ->
-        let o2 = nref `dot` lineEnd (snd ref)
-            cp2 = clip cp0 cp1 (negate nref) (-o2)
-            refNorm = (if noflip then 1 else -1) *^ (V2 (negate $ nref ^. _y) (nref ^. _x))
-            refNormMax = refNorm `dot` fst ref
-        in case cp2 of
-            [cp21] -> cp2
-            [cp21,cp22] -> boolToList (refNorm `dot` cp21 - refNormMax >= 0) cp21 <>
-                           boolToList (refNorm `dot` cp22 - refNormMax >= 0) cp22
-            _ -> error "Clip resulted in invalid number of points"
-      _ -> error "Clip resulted in invalid number of points"
-
 clip :: V2 Float -> V2 Float -> V2 Float -> Float -> [V2 Float]
 clip v1 v2 n o = let d1 = n `dot` v1 - o
                      d2 = n `dot` v2 - o
@@ -167,6 +140,23 @@ clip v1 v2 n o = let d1 = n `dot` v1 - o
                  in boolToList (d1 >= 0) v1 <>
                     boolToList (d2 >= 0) v2 <>
                     boolToList (d1 * d2 < 0) (v1 + (d1 / (d1 - d2)) *^ e)
+
+findContactPoints :: [V2 Float] -> [V2 Float] -> V2 Float -> [V2 Float]
+findContactPoints a b n =
+  let e1 = traceShowId $ findBestEdge a n
+      e2 = traceShowId $ findBestEdge b (-n)
+      e1Smaller = abs (lineVector (snd e1) `dot` n) <= abs (lineVector (snd e2) `dot` n)
+      ref = if e1Smaller then e1 else e2
+      inc = if e1Smaller then e2 else e1
+      nref = (signorm . lineVector . snd) ref
+      o1 = nref `dot` lineStart (snd ref)
+      [cp0,cp1] = clip (lineStart (snd inc)) (lineEnd (snd inc)) nref o1
+      o2 = nref `dot` lineEnd (snd ref)
+      [cp2,cp3] = clip cp0 cp1 (negate nref) (-o2)
+      refNorm = (if e1Smaller then 1 else -1) *^ V2 (negate $ nref ^. _y) (nref ^. _x)
+      refNormMax = refNorm `dot` fst ref
+  in  boolToList (refNorm `dot` cp2 - refNormMax >= 0) cp2 <>
+      boolToList (refNorm `dot` cp3 - refNormMax >= 0) cp3
 
 satIntersectsBodies :: RigidBody -> RigidBody -> Maybe (V2 Float)
 satIntersectsBodies a b = case satIntersects (bodyLines a) (bodyLines b) of
@@ -241,13 +231,14 @@ mainLoop renderer angle = do
 
 main :: IO ()
 main = do
-  let body1 = RigidBody (V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
-      body2 = RigidBody (V2 150 150) 0 (V2 0 0) 0 Nothing (Rectangle 50 50)
-  let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
-  let n2 = signorm $ fromJust $ satIntersectsBodies body2 body1
-  print n1
-  print $ findSupportPoints n1 (bodyPoints body1)
-  print $ findSupportPoints n2 (bodyPoints body2)
+  print $ findContactPoints [V2 4 2,V2 12 2,V2 12 5,V2 4 5] [V2 8 4,V2 14 4,V2 14 9,V2 8 14] (V2 0 (-1))
+--  let body1 = RigidBody (V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
+--      body2 = RigidBody (V2 150 150) 0 (V2 0 0) 0 Nothing (Rectangle 50 50)
+--  let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
+--  let n2 = signorm $ fromJust $ satIntersectsBodies body2 body1
+--  print n1
+--  print $ findSupportPoints n1 (bodyPoints body1)
+--  print $ findSupportPoints n2 (bodyPoints body2)
 --    print $ detectCollision (RigidBody (V2 0 0) 0.1 (V2 0 0) 0 Nothing (Rectangle 10 10)) (RigidBody (V2 5 5) 0 (V2 0 0) 0 Nothing (Rectangle 5 5))
  --   print $ setIntersects () ()
   --let firstLines = bodyLines $ RigidBody (V2 100 100) 0.1 (V2 0 0) 0 Nothing (Rectangle 100 100)
