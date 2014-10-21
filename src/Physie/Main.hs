@@ -11,7 +11,6 @@ import           Data.List              (maximumBy, minimumBy)
 import           Data.Maybe             (fromJust, isNothing, maybeToList)
 import           Data.Monoid            ((<>))
 import           Data.Ord               (comparing)
-import           Debug.Trace            (traceShowId)
 import           Graphics.UI.SDL.Events (pollEvent)
 import qualified Graphics.UI.SDL.Render as SDLR
 import qualified Graphics.UI.SDL.Types  as SDLT
@@ -22,6 +21,9 @@ import           Linear.V3              (V3 (..))
 import           Linear.Vector          ((*^), (^*))
 import           Physie.SDL             (drawLine, isQuitEvent, withImgInit,
                                          withRenderer, withWindow)
+import Debug.Trace(traceShow)
+
+traceShowId a = traceShow a a
 
 data Line = Line (V2 Float) (V2 Float) deriving Show
 
@@ -231,7 +233,8 @@ mainLoop renderer angle = do
 
 main :: IO ()
 main = do
-  print $ findContactPoints [V2 4 2,V2 12 2,V2 12 5,V2 4 5] [V2 8 4,V2 14 4,V2 14 9,V2 8 14] (V2 0 (-1))
+  --  print $ findContactPoints [V2 8 4,V2 14 4,V2 14 9,V2 8 14] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
+  print $ findContactPoints [V2 6 4,V2 9 7,V2 5 11,V2 2 8] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
 --  let body1 = RigidBody (V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
 --      body2 = RigidBody (V2 150 150) 0 (V2 0 0) 0 Nothing (Rectangle 50 50)
 --  let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
