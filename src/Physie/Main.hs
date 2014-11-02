@@ -1,12 +1,14 @@
+{-# LANGUAGE RankNTypes      #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
 import           Control.Applicative    ((<$>), (<*>))
-import           Control.Lens           ((^.),over,both)
+import           Control.Lens           (both, over, (^.))
 import           Control.Lens.TH        (makeLenses)
 import           Control.Monad          (msum, unless)
 import           Control.Monad.Loops    (unfoldM)
-import           Data.Maybe             (fromJust)
+import           Data.Monoid            ((<>))
+import           Debug.Trace            (trace)
 import           Graphics.UI.SDL.Events (pollEvent)
 import qualified Graphics.UI.SDL.Render as SDLR
 import qualified Graphics.UI.SDL.Types  as SDLT
@@ -15,14 +17,14 @@ import           Linear.Metric          (dot, signorm)
 import           Linear.V2              (V2 (..))
 import           Linear.V3              (V3 (..))
 import           Linear.Vector          ((*^))
+import           Physie.ContactPoints   (findContactPoints)
+import           Physie.Line
 import           Physie.Sat             (satIntersects)
 import           Physie.SDL             (drawLine, isQuitEvent, withImgInit,
                                          withRenderer, withWindow)
-import Debug.Trace(trace)
-import Data.Monoid((<>))
-import           Physie.ContactPoints   (findContactPoints)
-import           Physie.Line
+import           Physie.Time            (TimeTicks, getTicks, tickDelta,TimeDelta,fromNanoSeconds)
 
+traceShowId :: forall a. Show a => String -> a -> a
 traceShowId prefix a = trace (prefix <> show a) a
 
 toIntPoint :: (RealFrac a,Integral b) => V2 a -> V2 b
@@ -61,6 +63,8 @@ data RigidBody = RigidBody {
   , _bodyRotation        :: Float
   , _bodyLinearVelocity  :: V2 Float
   , _bodyAngularVelocity :: Float
+  , _bodyLinearForce     :: V2 Float
+  , _bodyTorque          :: V2 Float
   , _bodyMass            :: Maybe Float
   , _bodyShape           :: Rectangle
   }
@@ -120,51 +124,67 @@ findSupportPoints n vs = let dots = (`dot` n) <$> vs
                              mindot = minimum dots
                          in take 2 . map snd . filter (\(d,_) -> d < mindot + 0.001) $ zip dots vs
 
-mainLoop :: SDLT.Renderer -> Float -> IO ()
-mainLoop renderer angle = do
+mainLoop :: SDLT.Renderer -> Float -> TimeTicks -> IO ()
+mainLoop renderer angle oldticks = do
+  newticks <- getTicks
   events <- unfoldM pollEvent
+  let delta = newticks `tickDelta` oldticks
+  let quitEvent = any isQuitEvent events
   SDLR.setRenderDrawColor renderer 0 0 0 255
   SDLR.renderClear renderer
   SDLR.setRenderDrawColor renderer 255 255 255 255
-  let body1 = RigidBody (V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
-      body2 = RigidBody (V2 100 200) 0.5 (V2 0 0) 0 Nothing (Rectangle 100 100)
+  --let body1 = RigidBody {(V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
+  let body1 = RigidBody {
+      _bodyPosition = V2 100 100
+    , _bodyRotation = 0
+    , _bodyLinearVelocity = V2 0 0
+    , _bodyAngularVelocity = 0
+    , _bodyLinearForce = V2 0 0
+    , _bodyTorque = V2 0 0
+    , _bodyMass = Nothing
+    , _bodyShape = Rectangle 100 100
+  }
+  let body2 = RigidBody {
+      _bodyPosition = V2 100 200
+    , _bodyRotation = 0.5
+    , _bodyLinearVelocity = V2 0 0
+    , _bodyAngularVelocity = 0
+    , _bodyLinearForce = V2 0 0
+    , _bodyTorque = V2 0 0
+    , _bodyMass = Nothing
+    , _bodyShape = Rectangle 100 100
+  }
   drawBody renderer body1
   drawBody renderer body2
+  SDLR.renderPresent renderer
+  unless quitEvent $ mainLoop renderer (angle + 0.001) newticks
+  {-
   -- Ergibt Vektor, der von body2 wegzeigt (damit sie nicht mehr kollidieren)
   let nraw = satIntersectsBodies body1 body2
   case nraw of
    Just nunpacked -> do
      let n1 = nunpacked
      putStrLn $ "nraw=" <> show (signorm nunpacked)
-     -- Will Normalenvektor, der von body1 nach body2 zeigt
-     let cp = findContactPoints (bodyPoints body1) (bodyPoints body2) (-n1)
+     -- Kontaktpunkt auf body2, Vektor zeigt von body2 weg (siehe oben)
+     let cp = findContactPoints (bodyPoints body2) (bodyPoints body1) n1
      print cp
      SDLR.setRenderDrawColor renderer 255 0 0 255
-     mapM_ (drawLine renderer . over both toIntPoint . (\p -> (p,p + 10 *^ (-n1)))) cp
+     mapM_ (drawLine renderer . over both toIntPoint . (\p -> (p,p + 10 *^ n1))) cp
      SDLR.renderPresent renderer
      unless (any isQuitEvent events) $ mainLoop renderer (angle + 0.001)
    Nothing -> do
      SDLR.renderPresent renderer
      unless (any isQuitEvent events) $ mainLoop renderer (angle + 0.001)
-  --drawLine renderer (toIntPoint cp1,toIntPoint $ cp1 + 10 *^ n1)
-  --drawLine renderer (toIntPoint cp2,toIntPoint $ cp2 + 10 *^ n2)
---  let n2 = signorm $ fromJust $ satIntersectsBodies body2 body1
---  let sp1 = findSupportPoints n1 (bodyPoints body1)
---  let sp2 = findSupportPoints n2 (bodyPoints body2)
-  --let cp1 = findContactPoint sp1 sp2
-  --let cp2 = findContactPoint sp2 sp1
-  --drawLine renderer (toIntPoint cp1,toIntPoint $ cp1 + 10 *^ n1)
-  --drawLine renderer (toIntPoint cp2,toIntPoint $ cp2 + 10 *^ n2)
-  --mapM_ (\(x,y) -> drawLine renderer (toIntPoint x,toIntPoint y)) $ ((\p -> (p,p+(10 *^ n1))) <$> sp1) ++ ((\p -> (p,p+(10 *^ n2))) <$> sp2)
-  --drawLine renderer (toIntPoint sp2,toIntPoint (sp2 + 10 *^ n2))
---  let collision = detectCollision body1 body2
---  SDLR.setRenderDrawColor renderer 255 0 0 255
---  case collision of
---   Nothing -> return ()
---   Just (Collision contactPoint normal) ->
---     drawLine renderer (toIntPoint contactPoint,toIntPoint $ contactPoint + (normal ^* 10))
---  SDLR.renderPresent renderer
---  unless (any isQuitEvent events) $ mainLoop renderer (angle + 0.001)
+     -}
+
+maxDelta :: TimeDelta
+maxDelta = fromNanoSeconds $ 1000 * 1000 * 10
+
+splitDelta :: TimeDelta -> (Int,TimeDelta)
+splitDelta n = undefined
+
+simulationStep :: TimeDelta -> [RigidBody] -> [RigidBody]
+simulationStep = undefined
 
 main :: IO ()
 main = do
@@ -174,27 +194,8 @@ main = do
   print $ findContactPoints (reverse [V2 2 8,V2 5 11,V2 9 7,V2 6 4]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 0 (-1))
   putStrLn "NEW 2 (12,5) (9.28,5)"
   print $ findContactPoints (reverse [V2 9 4,V2 10 8,V2 14 7,V2 13 3]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 (-0.19) (-0.98))
-  --let body1 = RigidBody (V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
-  --    body2 = RigidBody (V2 100 200) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
-  --let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
-  --print n1
-  --let cp = findContactPoints (traceShowId "body1 points: " (bodyPoints body2)) (traceShowId "body2 points: " (bodyPoints body1)) (n1)
-  --print cp
-  --return ()
---  let body1 = RigidBody (V2 100 100) 0 (V2 0 0) 0 Nothing (Rectangle 100 100)
---      body2 = RigidBody (V2 150 150) 0 (V2 0 0) 0 Nothing (Rectangle 50 50)
---  let n1 = signorm $ fromJust $ satIntersectsBodies body1 body2
-
---  print n1
---  print $ findSupportPoints n1 (bodyPoints body1)
---  print $ findSupportPoints n2 (bodyPoints body2)
---    print $ detectCollision (RigidBody (V2 0 0) 0.1 (V2 0 0) 0 Nothing (Rectangle 10 10)) (RigidBody (V2 5 5) 0 (V2 0 0) 0 Nothing (Rectangle 5 5))
- --   print $ setIntersects () ()
-  --let firstLines = bodyLines $ RigidBody (V2 100 100) 0.1 (V2 0 0) 0 Nothing (Rectangle 100 100)
-  --let secondLines = bodyLines $ RigidBody (V2 150 150) 2.5 (V2 0 0) 0 Nothing (Rectangle 50 50)
-  --print $ satIntersects firstLines secondLines
-  --print $ satIntersects secondLines firstLines
 
   withImgInit $
-    withWindow "racie 0.0.1.1" $ \window ->
-      withRenderer window screenWidth screenHeight (`mainLoop` 0)
+    withWindow "racie 0.0.1.1" $ \window -> do
+      currentTicks <- getTicks
+      withRenderer window screenWidth screenHeight $ \renderer -> mainLoop renderer 0 currentTicks
