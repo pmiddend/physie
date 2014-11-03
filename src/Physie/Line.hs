@@ -9,16 +9,16 @@ module Physie.Line(
 import           Linear.Metric (signorm)
 import           Linear.V2     (V2, perp)
 
-data Line = Line (V2 Float) (V2 Float) deriving Show
+data Line a = Line a a deriving Show
 
-lineVector :: Line -> V2 Float
+lineVector :: Num a => Line a -> a
 lineVector (Line a b) = b - a
 
-lineStart :: Line -> V2 Float
+lineStart :: Line a -> a
 lineStart (Line a _) = a
 
-lineEnd :: Line -> V2 Float
+lineEnd :: Line t -> t
 lineEnd (Line _ b) = b
 
-lineNormal :: Line -> V2 Float
+lineNormal :: Floating a => Line (V2 a) -> V2 a
 lineNormal (Line a b) = perp .  signorm $ b - a

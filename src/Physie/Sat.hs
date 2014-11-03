@@ -12,7 +12,7 @@ import           Physie.Line   (Line (..))
 import           Physie.Ord    (minmax)
 
 -- Courtesy of http://elancev.name/oliver/2D%20polygon.htm
-satIntersects :: [Line] -> [Line] -> Maybe (V2 Float)
+satIntersects :: (Fractional b, Ord b) => [Line (V2 b)] -> [Line (V2 b)] -> Maybe (V2 b)
 satIntersects a b = let axes = concatMap (map (perp . lineToVector)) [a,b]
                         separationData = map (separates a b) axes
                     in if any isNothing separationData
