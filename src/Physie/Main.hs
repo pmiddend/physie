@@ -187,11 +187,11 @@ splitDelta n = let iterations = floor $ toSeconds n / toSeconds maxDelta
                in (iterations,n - fromIntegral iterations * maxDelta)
 
 updateBody :: TimeDelta -> RigidBody -> RigidBody
-updateBody d b | isJust (b ^. bodyMass) = let a = ((b ^. bodyLinearForce) ^/ fromJust (b ^. bodyMass))
-                                              v = (b ^. bodyLinearVelocity) + a ^* toSeconds d
-                                              p = (b ^. bodyPosition) + v ^* toSeconds d
+updateBody d b | isJust (b ^. bodyMass) = let la = ((b ^. bodyLinearForce) ^/ fromJust (b ^. bodyMass))
+                                              lv = (b ^. bodyLinearVelocity) + la ^* toSeconds d
+                                              p = (b ^. bodyPosition) + lv ^* toSeconds d
                                           in b {
-                                                   _bodyLinearVelocity = v
+                                                   _bodyLinearVelocity = traceShowId "lv=" lv
                                                  , _bodyPosition = p
                                                }
                | otherwise = b
@@ -217,9 +217,9 @@ main = do
             , _bodyRotation = 0
             , _bodyLinearVelocity = V2 0 0
             , _bodyAngularVelocity = 0
-            , _bodyLinearForce = V2 0 0
+            , _bodyLinearForce = V2 100 0
             , _bodyTorque = V2 0 0
-            , _bodyMass = Nothing
+            , _bodyMass = Just 100
             , _bodyShape = Rectangle 100 100
             }, RigidBody {
               _bodyPosition = V2 100 200
