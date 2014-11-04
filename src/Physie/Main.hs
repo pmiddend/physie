@@ -93,11 +93,13 @@ rectanglePoints (V2 x y) rot (Rectangle w h) = (to2 . (rmatrix !*) . to3) <$> po
         to3 (V2 x' y') = V3 x' y' 1
         to2 (V3 x' y' _) = V2 x' y'
 
+rectangleLines :: V2 Double -> Double -> Rectangle -> [Line (V2 Double)]
 rectangleLines pos rot rect = zipWith Line <*> (tail . cycle) $ rectanglePoints pos rot rect
 
 detectCollision :: RigidBody -> RigidBody -> Maybe Collision
 detectCollision b1 b2 = msum $ ((uncurry Collision <$>) . extractMaybe) <$> [(lineIntersection 0.001 x y,lineNormal x) | x <- bodyLines b1,y <- bodyLines b2]
 
+bodyLines :: RigidBody -> [Line (V2 Double)]
 bodyLines b1 = rectangleLines (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape)
 
 bodyPoints :: RigidBody -> [V2 Double]
