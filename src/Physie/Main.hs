@@ -3,7 +3,7 @@
 module Main where
 
 import           Control.Applicative    ((<$>), (<*>))
-import           Control.Lens           ((^.))
+import           Control.Lens           ((^.),IndexPreservingGetter,to)
 import           Control.Lens.TH        (makeLenses)
 import           Control.Monad          (msum, unless)
 import           Control.Monad.Loops    (unfoldM)
@@ -60,6 +60,9 @@ extractMaybe (Just a,b) = Just (a,b)
 
 data Rectangle = Rectangle Double Double
 
+rectangleInertia :: Double -> Rectangle -> Double
+rectangleInertia m (Rectangle w h) = 1.0/12.0 * m * (w*w + h*h)
+
 data RigidBody = RigidBody {
     _bodyPosition        :: V2 Double
   , _bodyRotation        :: Double
@@ -72,6 +75,9 @@ data RigidBody = RigidBody {
   }
 
 $(makeLenses ''RigidBody)
+
+bodyInertia :: IndexPreservingGetter RigidBody (Maybe Double)
+bodyInertia = to $ \b -> (\m -> rectangleInertia m (b ^. bodyShape)) <$> (b ^. bodyMass)
 
 data Collision = Collision {
     _collContactPoint :: V2 Double
@@ -182,19 +188,21 @@ mainLoop renderer oldticks oldDelta bodies = do
      -}
 
 maxDelta :: TimeDelta
-maxDelta = fromSeconds 0.1
+maxDelta = fromSeconds 0.01
 
 splitDelta :: TimeDelta -> (Int,TimeDelta)
 splitDelta n = let iterations = floor $ toSeconds n / toSeconds maxDelta
                in (iterations,n - fromIntegral iterations * maxDelta)
 
 updateBody :: TimeDelta -> RigidBody -> RigidBody
-updateBody d b | isJust (b ^. bodyMass) = let la = ((b ^. bodyLinearForce) ^/ fromJust (b ^. bodyMass))
-                                              lv = (b ^. bodyLinearVelocity) + la ^* toSeconds d
-                                              p = (b ^. bodyPosition) + lv ^* toSeconds d
+updateBody ds b | isJust (b ^. bodyMass) = let d = toSeconds ds
+                                               la = ((b ^. bodyLinearForce) ^/ fromJust (b ^. bodyMass))
+                                               lv = (b ^. bodyLinearVelocity) + la ^* d
+                                               p = (b ^. bodyPosition) + lv ^* d
                                           in b {
-                                                   _bodyLinearVelocity = traceShowId "lv=" lv
+                                                   _bodyLinearVelocity = lv
                                                  , _bodyPosition = p
+                                                 , _bodyRotation = (b ^. bodyRotation) + d * (b ^. bodyAngularVelocity)
                                                }
                | otherwise = b
 
@@ -224,13 +232,13 @@ main = do
             , _bodyMass = Just 100
             , _bodyShape = Rectangle 100 100
             }, RigidBody {
-              _bodyPosition = V2 100 200
+              _bodyPosition = V2 300 150
             , _bodyRotation = 0.5
             , _bodyLinearVelocity = V2 0 0
-            , _bodyAngularVelocity = 0
+            , _bodyAngularVelocity = 1
             , _bodyLinearForce = V2 0 0
             , _bodyTorque = V2 0 0
-            , _bodyMass = Nothing
+            , _bodyMass = Just 1
             , _bodyShape = Rectangle 100 100
             }
             ]
