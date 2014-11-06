@@ -3,11 +3,16 @@
 module Main where
 
 import           Control.Applicative    ((<$>), (<*>))
-import           Control.Lens           ((^.),IndexPreservingGetter,to)
+import           Control.Lens           (IndexPreservingGetter, ix, to, (&),
+                                         (+~), (.~), (^.), (^?!))
+import           Control.Lens.At        (Index, Ixed)
 import           Control.Lens.TH        (makeLenses)
 import           Control.Monad          (msum, unless)
 import           Control.Monad.Loops    (unfoldM)
-import           Data.Monoid            ((<>))
+import           Data.Foldable          (foldMap)
+import           Data.List              (tails)
+import           Data.Maybe             (fromJust, isJust)
+import           Data.Monoid            (Endo (Endo), appEndo, (<>))
 import           Debug.Trace            (trace)
 import           Graphics.UI.SDL.Events (pollEvent)
 import qualified Graphics.UI.SDL.Render as SDLR
@@ -16,15 +21,14 @@ import           Linear.Matrix          ((!*))
 import           Linear.Metric          (dot)
 import           Linear.V2              (V2 (..))
 import           Linear.V3              (V3 (..))
-import           Linear.Vector          ((*^),(^/),(^*))
+import           Linear.Vector          ((*^), (^*), (^/))
 import           Physie.ContactPoints   (findContactPoints)
 import           Physie.Line
 import           Physie.Sat             (satIntersects)
 import           Physie.SDL             (drawLine, isQuitEvent, withImgInit,
                                          withRenderer, withWindow)
-import           Physie.Time            (TimeDelta, TimeTicks, getTicks,
-                                         fromSeconds,toSeconds, tickDelta)
-import Data.Maybe(fromJust,isJust)
+import           Physie.Time            (TimeDelta, TimeTicks, fromSeconds,
+                                         getTicks, tickDelta, toSeconds)
 
 traceShowId :: forall a. Show a => String -> a -> a
 traceShowId prefix a = trace (prefix <> show a) a
@@ -80,8 +84,8 @@ bodyInertia :: IndexPreservingGetter RigidBody (Maybe Double)
 bodyInertia = to $ \b -> (\m -> rectangleInertia m (b ^. bodyShape)) <$> (b ^. bodyMass)
 
 data Collision = Collision {
-    _collContactPoint :: V2 Double
-  , _collNormal       :: V2 Double
+    _collContactPoints :: [V2 Double]
+  , _collNormal        :: V2 Double
   } deriving(Show)
 
 $(makeLenses ''Collision)
@@ -103,13 +107,15 @@ rectangleLines :: V2 Double -> Double -> Rectangle -> [Line (V2 Double)]
 rectangleLines pos rot rect = zipWith Line <*> (tail . cycle) $ rectanglePoints pos rot rect
 
 detectCollision :: RigidBody -> RigidBody -> Maybe Collision
-detectCollision b1 b2 = msum $ ((uncurry Collision <$>) . extractMaybe) <$> [(lineIntersection 0.001 x y,lineNormal x) | x <- bodyLines b1,y <- bodyLines b2]
+detectCollision b1 b2 = msum $ ((uncurry Collision <$>) . extractMaybe) <$> [(fmap return $ lineIntersection 0.001 x y,lineNormal x) | x <- bodyLines b1,y <- bodyLines b2]
 
 bodyLines :: RigidBody -> [Line (V2 Double)]
 bodyLines b1 = rectangleLines (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape)
 
-bodyPoints :: RigidBody -> [V2 Double]
-bodyPoints b1 = rectanglePoints (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape)
+-- bodyPoints :: RigidBody -> [V2 Double]
+-- bodyPoints b1 = rectanglePoints (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape)
+bodyPoints :: IndexPreservingGetter RigidBody [V2 Double]
+bodyPoints = to $ \b1 -> rectanglePoints (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape)
 
 screenWidth :: Int
 screenWidth = 640
@@ -194,6 +200,14 @@ splitDelta :: TimeDelta -> (Int,TimeDelta)
 splitDelta n = let iterations = floor $ toSeconds n / toSeconds maxDelta
                in (iterations,n - fromIntegral iterations * maxDelta)
 
+impulse :: RigidBody -> RigidBody -> V2 Double -> Double -> Double
+impulse a b n e = let va = a ^. bodyLinearVelocity
+                      vb = b ^. bodyLinearVelocity
+                      vab = va - vb
+                      m1 = fromJust (a ^. bodyMass)
+                      m2 = fromJust (b ^. bodyMass)
+                  in ((-1) * (1+e) * (vab `dot` n)) / ((n `dot` n) * (recip m1 + recip m2))
+
 updateBody :: TimeDelta -> RigidBody -> RigidBody
 updateBody ds b | isJust (b ^. bodyMass) = let d = toSeconds ds
                                                la = ((b ^. bodyLinearForce) ^/ fromJust (b ^. bodyMass))
@@ -206,8 +220,22 @@ updateBody ds b | isJust (b ^. bodyMass) = let d = toSeconds ds
                                                }
                | otherwise = b
 
+unorderedPairs :: forall b. [b] -> [(b, b)]
+unorderedPairs input = let ts = tails input
+                       in concat $ zipWith zip (map (cycle . take 1) ts) (drop 1 ts)
+
+generateCollisionData :: RigidBody -> RigidBody -> Maybe Collision
+generateCollisionData a b = (\n -> Collision (findContactPoints (a ^. bodyPoints) (b ^. bodyPoints) n) n) <$> satIntersectsBodies a b
+
+processCollision ((ixl,l),(ixr,r),colldata) = let imp = impulse l r (colldata ^. collNormal) 0.1
+                                                  newl = l & bodyLinearVelocity +~ (imp / (l ^?! bodyMass)) *^ (colldata ^. collNormal)
+                                                  newr = undefined
+                                              in (ix ixl .~ newl) . (ix ixr .~ newr)
+
 simulationStep :: TimeDelta -> [RigidBody] -> [RigidBody]
-simulationStep d = map (updateBody d)
+simulationStep d bs = let stepResult = map (updateBody d) bs
+                          collisionResults = map (\(l@(_,bl),r@(_,br)) -> (l,r,generateCollisionData bl br)) (unorderedPairs (zip ([0..] :: [Int]) stepResult))
+                      in foldMap Endo (map processCollision collisionResults) `appEndo` stepResult
 
 main :: IO ()
 main = do
@@ -235,7 +263,7 @@ main = do
               _bodyPosition = V2 300 150
             , _bodyRotation = 0.5
             , _bodyLinearVelocity = V2 0 0
-            , _bodyAngularVelocity = 1
+            , _bodyAngularVelocity = 0
             , _bodyLinearForce = V2 0 0
             , _bodyTorque = V2 0 0
             , _bodyMass = Just 1
