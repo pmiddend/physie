@@ -1,17 +1,18 @@
 {-# LANGUAGE RankNTypes      #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 module Main where
 
 import           Control.Applicative    ((<$>), (<*>))
 import           Control.Lens           (IndexPreservingGetter, ix, to, (&),
-                                         (+~), (.~), (^.), (^?!))
-import           Control.Lens.At        (Index, Ixed)
+                                         (+~), (.~), (^.), (-~))
+import           Control.Lens.At        (Index, Ixed,IxValue)
 import           Control.Lens.TH        (makeLenses)
 import           Control.Monad          (msum, unless)
 import           Control.Monad.Loops    (unfoldM)
 import           Data.Foldable          (foldMap)
 import           Data.List              (tails)
-import           Data.Maybe             (fromJust, isJust)
+import           Data.Maybe             (fromJust, isJust,mapMaybe)
 import           Data.Monoid            (Endo (Endo), appEndo, (<>))
 import           Debug.Trace            (trace)
 import           Graphics.UI.SDL.Events (pollEvent)
@@ -29,9 +30,7 @@ import           Physie.SDL             (drawLine, isQuitEvent, withImgInit,
                                          withRenderer, withWindow)
 import           Physie.Time            (TimeDelta, TimeTicks, fromSeconds,
                                          getTicks, tickDelta, toSeconds)
-
-traceShowId :: forall a. Show a => String -> a -> a
-traceShowId prefix a = trace (prefix <> show a) a
+import Physie.Debug(traceShowId)
 
 toIntPoint :: (RealFrac a,Integral b) => V2 a -> V2 b
 toIntPoint (V2 x y) = V2 (floor x) (floor y)
@@ -58,11 +57,15 @@ lineIntersection delta (Line p to1) (Line q to2)
         collinear = abs denom <= delta && abs unom <= delta
         overlapping = (0 <= ((q - p) `dot` r) && ((q - p) `dot` r) <= (r `dot` r)) || (0 <= (p - q) `dot` s && (p - q) `dot` s <= s `dot` s)
 
-extractMaybe :: (Maybe a,b) -> Maybe (a,b)
-extractMaybe (Nothing,_) = Nothing
-extractMaybe (Just a,b) = Just (a,b)
+extractMaybe1of2 :: (Maybe a,b) -> Maybe (a,b)
+extractMaybe1of2 (Nothing,_) = Nothing
+extractMaybe1of2 (Just a,b) = Just (a,b)
 
-data Rectangle = Rectangle Double Double
+extractMaybe3of3 :: (a,b,Maybe c) -> Maybe (a,b,c)
+extractMaybe3of3 (_,_,Nothing) = Nothing
+extractMaybe3of3 (a,b,Just c) = Just (a,b,c)
+
+data Rectangle = Rectangle Double Double deriving(Show)
 
 rectangleInertia :: Double -> Rectangle -> Double
 rectangleInertia m (Rectangle w h) = 1.0/12.0 * m * (w*w + h*h)
@@ -76,7 +79,7 @@ data RigidBody = RigidBody {
   , _bodyTorque          :: V2 Double
   , _bodyMass            :: Maybe Double
   , _bodyShape           :: Rectangle
-  }
+  } deriving(Show)
 
 $(makeLenses ''RigidBody)
 
@@ -107,7 +110,7 @@ rectangleLines :: V2 Double -> Double -> Rectangle -> [Line (V2 Double)]
 rectangleLines pos rot rect = zipWith Line <*> (tail . cycle) $ rectanglePoints pos rot rect
 
 detectCollision :: RigidBody -> RigidBody -> Maybe Collision
-detectCollision b1 b2 = msum $ ((uncurry Collision <$>) . extractMaybe) <$> [(fmap return $ lineIntersection 0.001 x y,lineNormal x) | x <- bodyLines b1,y <- bodyLines b2]
+detectCollision b1 b2 = msum $ ((uncurry Collision <$>) . extractMaybe1of2) <$> [(fmap return $ lineIntersection 0.001 x y,lineNormal x) | x <- bodyLines b1,y <- bodyLines b2]
 
 bodyLines :: RigidBody -> [Line (V2 Double)]
 bodyLines b1 = rectangleLines (b1 ^. bodyPosition) (b1 ^. bodyRotation) (b1 ^. bodyShape)
@@ -227,29 +230,29 @@ unorderedPairs input = let ts = tails input
 generateCollisionData :: RigidBody -> RigidBody -> Maybe Collision
 generateCollisionData a b = (\n -> Collision (findContactPoints (a ^. bodyPoints) (b ^. bodyPoints) n) n) <$> satIntersectsBodies a b
 
+processCollision :: (Ixed c, IxValue c ~ RigidBody) => ((Index c, RigidBody), (Index c, RigidBody), Collision) -> c -> c
 processCollision ((ixl,l),(ixr,r),colldata) = let imp = impulse l r (colldata ^. collNormal) 0.1
-                                                  newl = l & bodyLinearVelocity +~ (imp / (l ^?! bodyMass)) *^ (colldata ^. collNormal)
-                                                  newr = undefined
+                                                  newl = l & bodyLinearVelocity +~ (imp / fromJust (l ^. bodyMass)) *^ (colldata ^. collNormal)
+                                                  newr = r & bodyLinearVelocity -~ (imp / fromJust (r ^. bodyMass)) *^ (colldata ^. collNormal)
                                               in (ix ixl .~ newl) . (ix ixr .~ newr)
+
+simulationStepSimple :: TimeDelta -> [RigidBody] -> [RigidBody]
+simulationStepSimple d = map (updateBody d)
 
 simulationStep :: TimeDelta -> [RigidBody] -> [RigidBody]
 simulationStep d bs = let stepResult = map (updateBody d) bs
-                          collisionResults = map (\(l@(_,bl),r@(_,br)) -> (l,r,generateCollisionData bl br)) (unorderedPairs (zip ([0..] :: [Int]) stepResult))
+                          collisionResults = mapMaybe (extractMaybe3of3 . (\(l@(_,bl),r@(_,br)) -> (l,r,generateCollisionData bl br))) (unorderedPairs (zip ([0..] :: [Int]) stepResult))
                       in foldMap Endo (map processCollision collisionResults) `appEndo` stepResult
 
 main :: IO ()
 main = do
-  putStrLn "OLD (12,5) (8,5)"
-  print $ findContactPoints [V2 8 4,V2 14 4,V2 14 9,V2 8 14] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
-  putStrLn "NEW (6,4)"
-  print $ findContactPoints (reverse [V2 2 8,V2 5 11,V2 9 7,V2 6 4]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 0 (-1))
-  putStrLn "NEW 2 (12,5) (9.28,5)"
-  print $ findContactPoints (reverse [V2 9 4,V2 10 8,V2 14 7,V2 13 3]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 (-0.19) (-0.98))
-
-  withImgInit $
-    withWindow "racie 0.0.1.1" $ \window -> do
-      currentTicks <- getTicks
-      let initialBodies = [
+--   putStrLn "OLD (12,5) (8,5)"
+--   print $ findContactPoints [V2 8 4,V2 14 4,V2 14 9,V2 8 14] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
+--   putStrLn "NEW (6,4)"
+--   print $ findContactPoints (reverse [V2 2 8,V2 5 11,V2 9 7,V2 6 4]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 0 (-1))
+--   putStrLn "NEW 2 (12,5) (9.28,5)"
+--   print $ findContactPoints (reverse [V2 9 4,V2 10 8,V2 14 7,V2 13 3]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 (-0.19) (-0.98))
+  let initialBodies = [
                RigidBody {
               _bodyPosition = V2 100 100
             , _bodyRotation = 0
@@ -260,8 +263,8 @@ main = do
             , _bodyMass = Just 100
             , _bodyShape = Rectangle 100 100
             }, RigidBody {
-              _bodyPosition = V2 300 150
-            , _bodyRotation = 0.5
+              _bodyPosition = V2 400 150
+            , _bodyRotation = 0
             , _bodyLinearVelocity = V2 0 0
             , _bodyAngularVelocity = 0
             , _bodyLinearForce = V2 0 0
@@ -270,4 +273,10 @@ main = do
             , _bodyShape = Rectangle 100 100
             }
             ]
+
+--   print $ satIntersectsBodies (initialBodies !! 0) (initialBodies !! 1)
+
+  withImgInit $
+    withWindow "racie 0.0.1.1" $ \window -> do
+      currentTicks <- getTicks
       withRenderer window screenWidth screenHeight $ \renderer -> mainLoop renderer currentTicks (fromSeconds 0) initialBodies
