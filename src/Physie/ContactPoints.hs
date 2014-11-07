@@ -31,7 +31,7 @@ clip v1 v2 n o = let d1 = n `dot` v1 - o
 
 findContactPoints :: (Fractional a, Ord a, Show a) => [V2 a] -> [V2 a] -> V2 a -> [V2 a]
 findContactPoints a b n =
-  let e1 = traceShowId "best edge 1: " $ findBestEdge a n
+  let e1 = traceShowId "best edge 1: " $ findBestEdge a (traceShowId "n: " n)
       e2 = traceShowId "best edge 2: " $ findBestEdge b (-n)
       e1Smaller = traceShowId "e1Smaller: " $ abs (lineVector (snd e1) `dot` n) <= abs (lineVector (snd e2) `dot` n)
       ref = if e1Smaller then e1 else e2

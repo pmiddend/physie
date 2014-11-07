@@ -5,7 +5,7 @@ module Main where
 
 import           Control.Applicative    ((<$>), (<*>))
 import           Control.Lens           (IndexPreservingGetter, ix, to, (&),
-                                         (+~), (.~), (^.), (-~))
+                                         (*~),(+~), (.~), (^.), (-~),(^?!))
 import           Control.Lens.At        (Index, Ixed,IxValue)
 import           Control.Lens.TH        (makeLenses)
 import           Control.Monad          (msum, unless)
@@ -21,7 +21,7 @@ import qualified Graphics.UI.SDL.Types  as SDLT
 import           Linear.Matrix          ((!*))
 import           Linear.Metric          (dot)
 import           Linear.V2              (V2 (..))
-import           Linear.V3              (V3 (..))
+import           Linear.V3              (V3 (..),cross,_z)
 import           Linear.Vector          ((*^), (^*), (^/))
 import           Physie.ContactPoints   (findContactPoints)
 import           Physie.Line
@@ -203,14 +203,6 @@ splitDelta :: TimeDelta -> (Int,TimeDelta)
 splitDelta n = let iterations = floor $ toSeconds n / toSeconds maxDelta
                in (iterations,n - fromIntegral iterations * maxDelta)
 
-impulse :: RigidBody -> RigidBody -> V2 Double -> Double -> Double
-impulse a b n e = let va = a ^. bodyLinearVelocity
-                      vb = b ^. bodyLinearVelocity
-                      vab = va - vb
-                      m1 = fromJust (a ^. bodyMass)
-                      m2 = fromJust (b ^. bodyMass)
-                  in ((-1) * (1+e) * (vab `dot` n)) / ((n `dot` n) * (recip m1 + recip m2))
-
 updateBody :: TimeDelta -> RigidBody -> RigidBody
 updateBody ds b | isJust (b ^. bodyMass) = let d = toSeconds ds
                                                la = ((b ^. bodyLinearForce) ^/ fromJust (b ^. bodyMass))
@@ -228,13 +220,40 @@ unorderedPairs input = let ts = tails input
                        in concat $ zipWith zip (map (cycle . take 1) ts) (drop 1 ts)
 
 generateCollisionData :: RigidBody -> RigidBody -> Maybe Collision
-generateCollisionData a b = (\n -> Collision (findContactPoints (a ^. bodyPoints) (b ^. bodyPoints) n) n) <$> satIntersectsBodies a b
+generateCollisionData a b = satIntersectsBodies a b >>= helper
+  where helper n = case findContactPoints (a ^. bodyPoints) (b ^. bodyPoints) n of
+                    [] -> Nothing
+                    xs -> Just $ Collision xs n
+
+toV3 :: V2 a -> a -> V3 a
+toV3 (V2 x y) = V3 x y
 
 processCollision :: (Ixed c, IxValue c ~ RigidBody) => ((Index c, RigidBody), (Index c, RigidBody), Collision) -> c -> c
-processCollision ((ixl,l),(ixr,r),colldata) = let imp = impulse l r (colldata ^. collNormal) 0.1
-                                                  newl = l & bodyLinearVelocity +~ (imp / fromJust (l ^. bodyMass)) *^ (colldata ^. collNormal)
-                                                  newr = r & bodyLinearVelocity -~ (imp / fromJust (r ^. bodyMass)) *^ (colldata ^. collNormal)
-                                              in (ix ixl .~ newl) . (ix ixr .~ newr)
+processCollision ((ixa,a),(ixb,b),colldata) = let e = 0.1
+                                                  n = colldata ^. collNormal
+                                                  cp = (traceShowId "contPoints: " $ colldata ^. collContactPoints) ^?! ix 0
+                                                  va = a ^. bodyLinearVelocity
+                                                  vb = b ^. bodyLinearVelocity
+                                                  m1 = fromJust (a ^. bodyMass)
+                                                  m2 = fromJust (b ^. bodyMass)
+                                                  vab = va - vb
+                                                  nom = (-(1+e) *^ vab) `dot` n
+                                                  denomb = (n `dot` n) * (recip m1 + recip m2)
+                                                  impulse = nom / denomb
+                                                  ra = toV3 (cp - a ^. bodyPosition) 0
+                                                  rb = toV3 (cp - b ^. bodyPosition) 0
+                                                  n3 = toV3 n 0
+                                                  jamdf b v = ((v `cross` n3) & _z *~ recip (fromJust $ b ^. bodyInertia)) `cross` v
+                                                  jamd1 = jamdf a ra
+                                                  jamd2 = jamdf b rb
+                                                  jamd = denomb + (jamd1 + jamd2) `dot` n3
+                                                  jam = nom / jamd
+                                                  angularvf b v = jam * recip (fromJust $ b ^. bodyInertia) * (v `cross` n3) ^. _z
+                                                  angularva = angularvf a ra
+                                                  angularvb = angularvf b rb
+                                                  newa = a & bodyLinearVelocity +~ (impulse / fromJust (a ^. bodyMass)) *^ n & bodyAngularVelocity +~ angularva
+                                                  newb = a & bodyLinearVelocity +~ (impulse / fromJust (b ^. bodyMass)) *^ n & bodyAngularVelocity +~ angularvb
+                                              in (ix ixa .~ newa) . (ix ixb .~ newb)
 
 simulationStepSimple :: TimeDelta -> [RigidBody] -> [RigidBody]
 simulationStepSimple d = map (updateBody d)
@@ -256,15 +275,15 @@ main = do
                RigidBody {
               _bodyPosition = V2 100 100
             , _bodyRotation = 0
-            , _bodyLinearVelocity = V2 0 0
+            , _bodyLinearVelocity = V2 10 0
             , _bodyAngularVelocity = 0
             , _bodyLinearForce = V2 100 0
             , _bodyTorque = V2 0 0
             , _bodyMass = Just 100
             , _bodyShape = Rectangle 100 100
             }, RigidBody {
-              _bodyPosition = V2 400 150
-            , _bodyRotation = 0
+              _bodyPosition = V2 300 150
+            , _bodyRotation = 0.5
             , _bodyLinearVelocity = V2 0 0
             , _bodyAngularVelocity = 0
             , _bodyLinearForce = V2 0 0
