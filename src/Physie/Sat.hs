@@ -26,5 +26,5 @@ satIntersects a b = let axes = concatMap (map (perp . lineVector)) [a,b]
                                 then Nothing
                                 else let d0 = maxa - minb
                                          d1 = maxb - mina
-                                         depth = if d0 < d1 then d0 else d1
+                                         depth = min d0 d1
                                      in Just $ axis ^* (depth / quadrance axis)

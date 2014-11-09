@@ -7,7 +7,7 @@ import           Data.Monoid   ((<>))
 import           Data.Ord      (comparing)
 import           Debug.Trace   (trace)
 import           Linear.Metric (dot, signorm,Metric)
-import           Linear.V2     (V2 (..), _x, _y)
+import           Linear.V2     (V2 (..), _x, _y,perp)
 import           Linear.Vector ((*^))
 import           Physie.Line
 import           Physie.List   (boolToList, maximumByNeighbors)
@@ -29,11 +29,30 @@ clip v1 v2 n o = let d1 = n `dot` v1 - o
                     boolToList (d2 >= 0) v2 <>
                     boolToList (d1 * d2 < 0) (v1 + (d1 / (d1 - d2)) *^ e)
 
+{- Debugged
 findContactPoints :: (Fractional a, Ord a, Show a) => [V2 a] -> [V2 a] -> V2 a -> [V2 a]
 findContactPoints a b n =
-  let e1 = traceShowId "best edge 1: " $ findBestEdge a (traceShowId "n: " n)
-      e2 = traceShowId "best edge 2: " $ findBestEdge b (-n)
+  let e1 = traceShowId "best edge 1: " $ findBestEdge (traceShowId "a: " a) (traceShowId "n: " n)
+      e2 = traceShowId "best edge 2: " $ findBestEdge (traceShowId "b: " b) (-n)
       e1Smaller = traceShowId "e1Smaller: " $ abs (lineVector (snd e1) `dot` n) <= abs (lineVector (snd e2) `dot` n)
+      ref = if e1Smaller then e1 else e2
+      inc = if e1Smaller then e2 else e1
+      --nref = (signorm . lineVector . snd) ref
+      nref = traceShowId "nref: " $ (lineVector . snd) ref
+      o1 = traceShowId "o1: " $ nref `dot` lineStart (snd ref)
+      [cp0,cp1] = traceShowId "clip1: " $ clip (lineStart (snd inc)) (lineEnd (snd inc)) nref o1
+      o2 = traceShowId "o2: " $ nref `dot` lineEnd (snd ref)
+      [cp2,cp3] = traceShowId "clip2: " $ clip cp0 cp1 (negate nref) (-o2)
+      refNorm = traceShowId "refNorm: " $ (if e1Smaller then 1 else -1) *^ perp nref
+      refNormMax = traceShowId "refNormMax: " $ refNorm `dot` fst ref
+  in  boolToList (refNorm `dot` cp2 - refNormMax >= 0) cp2 <>
+      boolToList (refNorm `dot` cp3 - refNormMax >= 0) cp3
+      -}
+findContactPoints :: (Fractional a, Ord a, Show a) => [V2 a] -> [V2 a] -> V2 a -> [V2 a]
+findContactPoints a b n =
+  let e1 = findBestEdge a n
+      e2 = findBestEdge b (-n)
+      e1Smaller = abs (lineVector (snd e1) `dot` n) <= abs (lineVector (snd e2) `dot` n)
       ref = if e1Smaller then e1 else e2
       inc = if e1Smaller then e2 else e1
       --nref = (signorm . lineVector . snd) ref
@@ -42,7 +61,7 @@ findContactPoints a b n =
       [cp0,cp1] = clip (lineStart (snd inc)) (lineEnd (snd inc)) nref o1
       o2 = nref `dot` lineEnd (snd ref)
       [cp2,cp3] = clip cp0 cp1 (negate nref) (-o2)
-      refNorm = (if e1Smaller then 1 else -1) *^ V2 (negate $ nref ^. _y) (nref ^. _x)
+      refNorm = (if e1Smaller then 1 else -1) *^ perp nref
       refNormMax = refNorm `dot` fst ref
   in  boolToList (refNorm `dot` cp2 - refNormMax >= 0) cp2 <>
       boolToList (refNorm `dot` cp3 - refNormMax >= 0) cp3
