@@ -29,6 +29,8 @@ executable physie
                      , vector
                      , monad-loops
                      , clock
+                     , mtl
+                     , transformers
   -- hs-source-dirs:      
   default-language:    Haskell2010
   ghc-options: -Wall

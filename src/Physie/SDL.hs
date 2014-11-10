@@ -5,6 +5,7 @@ module Physie.SDL(
   , drawLines
   , drawLine
   , isQuitEvent
+  , isKeydownEvent
   ) where
 
 import Control.Applicative((<$>))
@@ -21,7 +22,7 @@ import qualified Graphics.UI.SDL.Video  as SDLV
 import Linear.V2(V2(..))
 
 withImgInit :: IO a -> IO a
-withImgInit a = bracket_ (SDLImage.init [SDLImage.initPng]) SDLImage.quit a
+withImgInit = bracket_ (SDLImage.init [SDLImage.initPng]) SDLImage.quit
 
 screenAbsoluteWidth :: Int
 screenAbsoluteWidth = 0
@@ -52,6 +53,10 @@ drawLine renderer (V2 x1 y1,V2 x2 y2) = SDLR.renderDrawLine renderer (fromIntegr
 
 drawLines :: SDLT.Renderer -> [V2 Int] -> IO ()
 drawLines renderer ls = SDLR.renderDrawLines renderer (fromList $ (\(V2 x y) -> SDLRect.Point x y) <$> ls)
+
+isKeydownEvent :: Event -> Scancode -> Bool
+isKeydownEvent (Event _ (Keyboard _ _ _ (Keysym sc _ _))) esc = sc == esc
+isKeydownEvent _ _ = False
 
 isQuitEvent :: Event -> Bool
 isQuitEvent (Event _ Quit) = True

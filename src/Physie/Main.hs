@@ -6,10 +6,10 @@ module Main where
 import           Control.Applicative    ((<$>), (<*>))
 import           Control.Lens           (IndexPreservingGetter, both, each, ix,
                                          over, to, (&), (*~), (+~), (-~), (.~),
-                                         (^.), (^?!))
+                                         (^.), (^?!),use,(.=))
 import           Control.Lens.At        (Index, IxValue, Ixed)
 import           Control.Lens.TH        (makeLenses)
-import           Control.Monad          (msum, unless)
+import           Control.Monad          (msum, unless,void)
 import           Control.Monad.Loops    (unfoldM)
 import           Data.Foldable          (foldMap)
 import           Data.List              (tails)
@@ -18,6 +18,7 @@ import           Data.Monoid            (Endo (Endo), appEndo, (<>))
 import           Data.Traversable       (traverse)
 import           Debug.Trace            (trace)
 import           Graphics.UI.SDL.Events (pollEvent)
+import           Graphics.UI.SDL.Keysym (Scancode (Space))
 import qualified Graphics.UI.SDL.Render as SDLR
 import qualified Graphics.UI.SDL.Types  as SDLT
 import           Linear.Matrix          ((!*))
@@ -29,10 +30,12 @@ import           Physie.ContactPoints   (findContactPoints)
 import           Physie.Debug           (traceShowId)
 import           Physie.Line
 import           Physie.Sat             (satIntersects)
-import           Physie.SDL             (drawLine, isQuitEvent, withImgInit,
-                                         withRenderer, withWindow)
+import           Physie.SDL             (drawLine, isKeydownEvent, isQuitEvent,
+                                         withImgInit, withRenderer, withWindow)
 import           Physie.Time            (TimeDelta, TimeTicks, fromSeconds,
                                          getTicks, tickDelta, toSeconds)
+import Control.Monad.State.Strict(StateT,runStateT)
+import Control.Monad.Trans.Class(lift)
 
 toIntPoint :: (RealFrac a,Integral b) => V2 a -> V2 b
 toIntPoint (V2 x y) = V2 (floor x) (floor y)
@@ -128,8 +131,22 @@ screenWidth = 640
 screenHeight :: Int
 screenHeight = 480
 
-drawBody :: SDLT.Renderer -> RigidBody -> IO ()
-drawBody r b = mapM_ (drawLine r) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> bodyLines b)
+data GameStateData = GameStateData {
+    _renderer :: SDLT.Renderer
+  , _ticks :: TimeTicks
+  , _prevDelta :: TimeDelta
+  , _bodies :: [RigidBody]
+  , _timeMultiplier :: Double
+  }
+
+$(makeLenses ''GameStateData)
+
+type GameState a = StateT GameStateData IO a
+
+drawBody :: RigidBody -> GameState ()
+drawBody b = do
+  r <- use renderer
+  lift $ mapM_ (drawLine r) ((\(Line x y) -> (floor <$> x,floor <$> y)) <$> bodyLines b)
 
 satIntersectsBodies :: RigidBody -> RigidBody -> Maybe (V2 Double)
 satIntersectsBodies a b = case satIntersects (bodyLines a) (bodyLines b) of
@@ -152,19 +169,29 @@ drawPoint r p = let o = 3
                      , (p + V2 (-o) o,p + V2 (-o) (-o))]
                 in mapM_ (drawLine r) $ over (traverse . each) toIntPoint ls
 
-mainLoop :: SDLT.Renderer -> TimeTicks -> TimeDelta -> [RigidBody] -> IO ()
-mainLoop renderer oldticks oldDelta bodies = do
-  events <- unfoldM pollEvent
+mainLoop :: GameState ()
+mainLoop = do
+  events <- unfoldM (lift pollEvent)
   let quitEvent = any isQuitEvent events
-  newticks <- getTicks
-  let delta = newticks `tickDelta` oldticks
+  oldTicks <- use ticks
+  newTicks <- lift getTicks
+  ticks .= newTicks
+  oldTimeMultiplier <- use timeMultiplier
+  let newtm = if any (`isKeydownEvent` Space) events then 0 else 1
+  let delta'= newTicks `tickDelta` oldTicks
+  oldDelta <- use prevDelta
+  let delta = fromSeconds $ newtm * toSeconds delta'
   let (iterations,newDelta) = splitDelta (oldDelta + delta)
-  SDLR.setRenderDrawColor renderer 0 0 0 255
-  SDLR.renderClear renderer
-  SDLR.setRenderDrawColor renderer 255 255 255 255
-  mapM_ (drawBody renderer) bodies
-  SDLR.renderPresent renderer
-  unless quitEvent $ mainLoop renderer newticks newDelta (iterate (simulationStep maxDelta) bodies !! iterations)
+  prevDelta .= newDelta
+  r <- use renderer
+  lift $ SDLR.setRenderDrawColor r 0 0 0 255
+  lift $ SDLR.renderClear r
+  lift $ SDLR.setRenderDrawColor r 255 255 255 255
+  oldBodies <- use bodies
+  mapM_ drawBody oldBodies
+  lift $ SDLR.renderPresent r
+  bodies .= iterate (simulationStep maxDelta) oldBodies !! iterations
+  unless quitEvent mainLoop
   {-
   -- Ergibt Vektor, der von body2 wegzeigt (damit sie nicht mehr kollidieren)
   let nraw = satIntersectsBodies body1 body2
@@ -299,4 +326,4 @@ main = do
   withImgInit $
     withWindow "racie 0.0.1.1" $ \window -> do
       currentTicks <- getTicks
-      withRenderer window screenWidth screenHeight $ \renderer -> mainLoop renderer currentTicks (fromSeconds 0) initialBodies
+      withRenderer window screenWidth screenHeight $ \rend -> void $ runStateT mainLoop (GameStateData rend currentTicks (fromSeconds 0) initialBodies 1)
