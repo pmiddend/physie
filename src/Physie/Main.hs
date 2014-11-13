@@ -6,19 +6,20 @@ module Main where
 import           Control.Applicative    ((<$>), (<*>))
 import           Control.Lens           (IndexPreservingGetter, both, each, ix,
                                          over, to, (&), (*~), (+~), (-~), (.~),
-                                         (^.), (^?!),use,(.=))
+                                         (^.), (^?!),use,(.=),(%=))
 import           Control.Lens.At        (Index, IxValue, Ixed)
-import           Control.Lens.TH        (makeLenses)
+import           Control.Lens.TH        (makeLenses,makeClassy)
 import           Control.Monad          (msum, unless,void)
 import           Control.Monad.Loops    (unfoldM)
 import           Data.Foldable          (foldMap)
+import           Graphics.UI.SDL.Events (Event (..),pollEvent)
 import           Data.List              (tails)
+import Data.Word(Word8)
 import           Data.Maybe             (fromJust, isJust, mapMaybe)
 import           Data.Monoid            (Endo (Endo), appEndo, (<>))
 import           Data.Traversable       (traverse)
 import           Debug.Trace            (trace)
-import           Graphics.UI.SDL.Events (pollEvent)
-import           Graphics.UI.SDL.Keysym (Scancode (Space))
+import           Graphics.UI.SDL.Keysym (Scancode (LeftShift,LeftControl))
 import qualified Graphics.UI.SDL.Render as SDLR
 import qualified Graphics.UI.SDL.Types  as SDLT
 import           Linear.Matrix          ((!*))
@@ -139,7 +140,7 @@ data GameStateData = GameStateData {
   , _timeMultiplier :: Double
   }
 
-$(makeLenses ''GameStateData)
+$(makeClassy ''GameStateData)
 
 type GameState a = StateT GameStateData IO a
 
@@ -169,29 +170,48 @@ drawPoint r p = let o = 3
                      , (p + V2 (-o) o,p + V2 (-o) (-o))]
                 in mapM_ (drawLine r) $ over (traverse . each) toIntPoint ls
 
+updateTimeMultiplier :: [Event] -> Double -> Double
+updateTimeMultiplier es oldTimeMultiplier
+  | any (`isKeydownEvent` LeftShift) es = oldTimeMultiplier - 0.1
+  | any (`isKeydownEvent` LeftControl) es = oldTimeMultiplier + 0.1
+  | otherwise = oldTimeMultiplier
+
+sdlSetRenderDrawColor :: (Word8, Word8, Word8, Word8) -> GameState ()
+sdlSetRenderDrawColor (r,g,b,a) = use renderer >>= \rend -> lift $ SDLR.setRenderDrawColor rend r g b a
+
+sdlRenderClear :: GameState ()
+sdlRenderClear = use renderer >>= \rend -> lift $ SDLR.renderClear rend
+
+sdlRenderPresent :: GameState ()
+sdlRenderPresent = use renderer >>= \rend -> lift $ SDLR.renderPresent rend
+
+colorBlack :: (Word8, Word8, Word8, Word8)
+colorBlack = (0,0,0,255)
+
+colorWhite :: (Word8, Word8, Word8, Word8)
+colorWhite = (255,255,255,255)
+
 mainLoop :: GameState ()
 mainLoop = do
   events <- unfoldM (lift pollEvent)
-  let quitEvent = any isQuitEvent events
   oldTicks <- use ticks
   newTicks <- lift getTicks
   ticks .= newTicks
-  oldTimeMultiplier <- use timeMultiplier
-  let newtm = if any (`isKeydownEvent` Space) events then 0 else 1
-  let delta'= newTicks `tickDelta` oldTicks
+  let delta' = newTicks `tickDelta` oldTicks
   oldDelta <- use prevDelta
+  timeMultiplier %= updateTimeMultiplier events
+  newtm <- use timeMultiplier
   let delta = fromSeconds $ newtm * toSeconds delta'
   let (iterations,newDelta) = splitDelta (oldDelta + delta)
   prevDelta .= newDelta
-  r <- use renderer
-  lift $ SDLR.setRenderDrawColor r 0 0 0 255
-  lift $ SDLR.renderClear r
-  lift $ SDLR.setRenderDrawColor r 255 255 255 255
+  sdlSetRenderDrawColor colorBlack
+  sdlRenderClear
+  sdlSetRenderDrawColor colorWhite
   oldBodies <- use bodies
   mapM_ drawBody oldBodies
-  lift $ SDLR.renderPresent r
+  sdlRenderPresent
   bodies .= iterate (simulationStep maxDelta) oldBodies !! iterations
-  unless quitEvent mainLoop
+  unless (any isQuitEvent events) mainLoop
   {-
   -- Ergibt Vektor, der von body2 wegzeigt (damit sie nicht mehr kollidieren)
   let nraw = satIntersectsBodies body1 body2
