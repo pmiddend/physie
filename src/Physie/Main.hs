@@ -6,8 +6,8 @@ module Main where
 import           Control.Applicative    ((<$>), (<*>))
 import           Control.Lens           (IndexPreservingGetter, both, each, ix,
                                          over, to, (&), (*~), (+~), (-~), (.~),
-                                         (^.), (^?!),use,(.=),(%=))
-import           Control.Lens.At        (Index, IxValue, Ixed)
+                                         (^.), (^?!),use,(.=),(%=),_2,_3,view)
+import           Control.Lens.At        (Index, IxValue, Ixed,at)
 import           Control.Lens.TH        (makeLenses,makeClassy)
 import           Control.Monad          (msum, unless,void)
 import           Control.Monad.Loops    (unfoldM)
@@ -161,14 +161,16 @@ findSupportPoints n vs = let dots = (`dot` n) <$> vs
                              mindot = minimum dots
                          in take 2 . map snd . filter (\(d,_) -> d < mindot + 0.001) $ zip dots vs
 
-drawPoint :: SDLT.Renderer -> V2 Double -> IO ()
-drawPoint r p = let o = 3
-                    ls = [
-                       (p + V2 (-o) (-o),p + V2 o (-o))
-                     , (p + V2 o (-o),p + V2 o o)
-                     , (p + V2 o o,p + V2 (-o) o)
-                     , (p + V2 (-o) o,p + V2 (-o) (-o))]
-                in mapM_ (drawLine r) $ over (traverse . each) toIntPoint ls
+drawPoint :: V2 Double -> GameState ()
+drawPoint p = do
+  r <- use renderer
+  let o = 3
+      ls = [
+             (p + V2 (-o) (-o),p + V2 o (-o))
+           , (p + V2 o (-o),p + V2 o o)
+           , (p + V2 o o,p + V2 (-o) o)
+           , (p + V2 (-o) o,p + V2 (-o) (-o))]
+  lift $ mapM_ (drawLine r) $ over (traverse . each) toIntPoint ls
 
 updateTimeMultiplier :: [Event] -> Double -> Double
 updateTimeMultiplier es oldTimeMultiplier
@@ -210,26 +212,11 @@ mainLoop = do
   oldBodies <- use bodies
   mapM_ drawBody oldBodies
   sdlRenderPresent
-  bodies .= iterate (simulationStep maxDelta) oldBodies !! iterations
+  let simulationResult = iterate (simulationStep maxDelta . snd) ([],oldBodies)
+  bodies .= snd (simulationResult !! iterations)
+  let points = concatMap fst simulationResult
+  mapM_ drawPoint points
   unless (any isQuitEvent events) mainLoop
-  {-
-  -- Ergibt Vektor, der von body2 wegzeigt (damit sie nicht mehr kollidieren)
-  let nraw = satIntersectsBodies body1 body2
-  case nraw of
-   Just nunpacked -> do
-     let n1 = nunpacked
-     putStrLn $ "nraw=" <> show (signorm nunpacked)
-     -- Kontaktpunkt auf body2, Vektor zeigt von body2 weg (siehe oben)
-     let cp = findContactPoints (bodyPoints body2) (bodyPoints body1) n1
-     print cp
-     SDLR.setRenderDrawColor renderer 255 0 0 255
-     mapM_ (drawLine renderer . over both toIntPoint . (\p -> (p,p + 10 *^ n1))) cp
-     SDLR.renderPresent renderer
-     unless (any isQuitEvent events) $ mainLoop renderer (angle + 0.001)
-   Nothing -> do
-     SDLR.renderPresent renderer
-     unless (any isQuitEvent events) $ mainLoop renderer (angle + 0.001)
-     -}
 
 maxDelta :: TimeDelta
 maxDelta = fromSeconds 0.01
@@ -304,10 +291,10 @@ processCollision ((ixa,a),(ixb,b),colldata) = let e = 0.1
 simulationStepSimple :: TimeDelta -> [RigidBody] -> [RigidBody]
 simulationStepSimple d = map (updateBody d)
 
-simulationStep :: TimeDelta -> [RigidBody] -> [RigidBody]
+simulationStep :: TimeDelta -> [RigidBody] -> ([V2 Double],[RigidBody])
 simulationStep d bs = let stepResult = map (updateBody d) bs
                           collisionResults = mapMaybe (extractMaybe3of3 . (\(l@(_,bl),r@(_,br)) -> (l,r,generateCollisionData bl br))) (unorderedPairs (zip ([0..] :: [Int]) stepResult))
-                      in foldMap Endo (map processCollision collisionResults) `appEndo` stepResult
+                      in (concatMap (view (_3 . collContactPoints)) collisionResults,foldMap Endo (map processCollision collisionResults) `appEndo` stepResult)
 
 main :: IO ()
 main = do
