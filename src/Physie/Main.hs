@@ -6,11 +6,11 @@ module Main where
 import           Control.Applicative        ((<$>), (<*>))
 import           Control.Lens               (IndexPreservingGetter, both, each,
                                              ix, over, to, use, view, (%=), (&),
-                                             (*~), (+~), (-~), (.=), (.~), (^.),
-                                             (^?!), _1, _2, _3)
+                                             (*~), (+=), (+~), (-~), (.=), (.~),
+                                             (^.), (^?!), _1, _2, _3)
 import           Control.Lens.At            (Index, IxValue, Ixed, at)
 import           Control.Lens.TH            (makeClassy, makeLenses)
-import           Control.Monad              (msum, unless, void)
+import           Control.Monad              (msum, unless, void, when)
 import           Control.Monad.Loops        (unfoldM)
 import           Control.Monad.State.Strict (StateT, runStateT)
 import           Control.Monad.Trans.Class  (MonadTrans, lift)
@@ -31,7 +31,7 @@ import           Graphics.UI.SDL.TTF.Types  (TTFFont)
 import qualified Graphics.UI.SDL.Types      as SDLT
 import           Linear.Matrix              ((!*))
 import           Linear.Metric              (dot)
-import           Linear.V2                  (V2 (..),_x,_y)
+import           Linear.V2                  (V2 (..), _x, _y)
 import           Linear.V3                  (V3 (..), cross, _z)
 import           Linear.Vector              ((*^), (^*), (^/))
 import           Physie.Colors
@@ -39,12 +39,14 @@ import           Physie.ContactPoints       (findContactPoints)
 import           Physie.Debug               (traceShowId)
 import           Physie.Line
 import           Physie.Sat                 (satIntersects)
-import           Physie.SDL                 (drawLine, isKeydownEvent,
+import           Physie.SDL                 (createFontTexture, destroyTexture,
+                                             drawLine, isKeydownEvent,
                                              isQuitEvent, withFontInit,
                                              withImgInit, withRenderer,
-                                             withWindow,createAndRenderTexture)
+                                             withWindow)
 import           Physie.Time                (TimeDelta, TimeTicks, fromSeconds,
                                              getTicks, tickDelta, toSeconds)
+import           System.FilePath
 
 toIntPoint :: (RealFrac a,Integral b) => V2 a -> V2 b
 toIntPoint (V2 x y) = V2 (floor x) (floor y)
@@ -140,28 +142,51 @@ screenWidth = 640
 screenHeight :: Int
 screenHeight = 480
 
-data GameStateData = GameStateData {
-    _renderer       :: SDLT.Renderer
-  , _font           :: TTFFont
-  , _ticks          :: TimeTicks
-  , _prevDelta      :: TimeDelta
-  , _bodies         :: [RigidBody]
-  , _timeMultiplier :: Double
+data ConsoleMessage = ConsoleMessage {
+    _conMesText  :: String
+  , _conMesStart :: TimeTicks
   }
 
-$(makeClassy ''GameStateData)
+$(makeLenses ''ConsoleMessage)
+
+data GameStateData = GameStateData {
+    _renderer        :: SDLT.Renderer
+  , _font            :: TTFFont
+  , _ticks           :: TimeTicks
+  , _prevDelta       :: TimeDelta
+  , _bodies          :: [RigidBody]
+  , _timeMultiplier  :: Double
+  , _contactPointSum :: Int
+  , _consoleMessages :: [ConsoleMessage]
+  }
+
+$(makeLenses ''GameStateData)
 
 type GameState a = StateT GameStateData IO a
 
-createAndRenderText :: String -> Color -> V2 Double -> GameState SDLT.Texture
+data TextPosition = LeftTop | LeftBottom | RightTop | RightBottom
+
+createAndRenderTextRelative :: String -> Color -> TextPosition -> GameState ()
+createAndRenderTextRelative [] _ _ = return ()
+createAndRenderTextRelative text color position = do
+  f <- use font
+  (width, height) <- lift $ SDLTtf.sizeText f text
+  let realPosition = case position of
+                        LeftTop -> V2 0 0
+                        LeftBottom -> V2 0 (screenHeight - height)
+                        RightTop -> V2 (screenWidth - width) 0
+                        RightBottom -> V2 (screenWidth - width) (screenHeight - height)
+  createAndRenderText text color (fromIntegral <$> realPosition)
+
+createAndRenderText :: String -> Color -> V2 Double -> GameState ()
+createAndRenderText [] _ _ = return ()
 createAndRenderText text color position = do
   f <- use font
   rend <- use renderer
   texture <- createFontTexture rend f text color
   (width, height) <- lift $ SDLTtf.sizeText f text
   lift $ SDLR.renderCopy rend texture Nothing (Just $ SDLRect.Rect (floor (position ^. _x)) (floor (position ^. _y)) width height)
-  return texture
-
+  destroyTexture texture
 
 drawBody :: RigidBody -> GameState ()
 drawBody b = do
@@ -193,8 +218,8 @@ drawPoint p = do
 
 updateTimeMultiplier :: [Event] -> Double -> Double
 updateTimeMultiplier es oldTimeMultiplier
-  | any (`isKeydownEvent` LeftShift) es = oldTimeMultiplier - 0.1
-  | any (`isKeydownEvent` LeftControl) es = oldTimeMultiplier + 0.1
+  | any (`isKeydownEvent` LeftControl) es = oldTimeMultiplier - 0.1
+  | any (`isKeydownEvent` LeftShift) es = oldTimeMultiplier + 0.1
   | otherwise = oldTimeMultiplier
 
 sdlSetRenderDrawColor :: Color -> GameState ()
@@ -221,8 +246,10 @@ mainLoop = do
   ticks .= newTicks
   let delta' = newTicks `tickDelta` oldTicks
   oldDelta <- use prevDelta
+  oldtm <- use timeMultiplier
   timeMultiplier %= updateTimeMultiplier events
   newtm <- use timeMultiplier
+  when (newtm /= oldtm) (consoleMessages %= ([ConsoleMessage "time changed" newTicks] ++))
   let delta = fromSeconds $ newtm * toSeconds delta'
   let (iterations,newDelta) = splitDelta (oldDelta + delta)
   prevDelta .= newDelta
@@ -236,6 +263,11 @@ mainLoop = do
   let points = concatMap (view simStepCollPoints) (take (iterations+1) simulationResult)
   sdlSetRenderDrawColor colorsRed
   mapM_ drawPoint points
+  contactPointSum += length points
+  cpsum <- use contactPointSum
+  createAndRenderTextRelative ("cps: " <> show cpsum) colorsWhite LeftTop
+  cms <- use consoleMessages
+  createAndRenderTextRelative (unlines . map (view conMesText) $ cms) colorsWhite LeftBottom
   sdlRenderPresent
   unless (any isQuitEvent events) mainLoop
 
@@ -317,15 +349,11 @@ simulationStep d bs = let stepResult = map (updateBody d) bs
                           collisionResults = mapMaybe (extractMaybe3of3 . (\(l@(_,bl),r@(_,br)) -> (l,r,generateCollisionData bl br))) (unorderedPairs (zip ([0..] :: [Int]) stepResult))
                       in SimulationStep (concatMap (view (_3 . collContactPoints)) collisionResults) (foldMap Endo (map processCollision collisionResults) `appEndo` stepResult)
 
-main :: IO ()
-main = do
-{-  putStrLn "OLD (12,5) (8,5)"
-  print $ findContactPoints [V2 8 4,V2 14 4,V2 14 9,V2 8 14] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
-  putStrLn "NEW (6,4)"
-  print $ findContactPoints (reverse [V2 2 8,V2 5 11,V2 9 7,V2 6 4]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 0 (-1))
-  putStrLn "NEW 2 (12,5) (9.28,5)"
-  print $ findContactPoints (reverse [V2 9 4,V2 10 8,V2 14 7,V2 13 3]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 (-0.19) (-0.98))-}
-  let initialBodies = [
+mediaDir :: FilePath
+mediaDir = "media"
+
+initialBodies :: [RigidBody]
+initialBodies = [
                RigidBody {
               _bodyPosition = V2 100 100
             , _bodyRotation = 0
@@ -347,11 +375,19 @@ main = do
             }
             ]
 
-  -- 1. Schritt: Normale musste invertiert werden
-  -- 2. Schritt: revere auf Punkte von a und b
---   print $ findContactPoints (reverse [V2 253.33759999999964 50.0,V2 253.33759999999964 150.0,V2 153.33759999999964 150.0,V2 153.33759999999964 50.0]) (reverse [V2 367.85040502472884 130.0921488356915,V2 319.9078511643085 217.85040502472873,V2 232.1495949752712 169.90785116430845,V2 280.0921488356915 82.14959497527119]) (V2 (7.942026935847639) (4.338749089460013))
+initialGameState :: SDLT.Renderer -> TTFFont -> TimeTicks -> GameStateData
+initialGameState rend stdFont currentTicks = GameStateData rend stdFont currentTicks (fromSeconds 0) initialBodies 1 0 []
+
+main :: IO ()
+main = do
+{-  putStrLn "OLD (12,5) (8,5)"
+  print $ findContactPoints [V2 8 4,V2 14 4,V2 14 9,V2 8 14] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
+  putStrLn "NEW (6,4)"
+  print $ findContactPoints (reverse [V2 2 8,V2 5 11,V2 9 7,V2 6 4]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 0 (-1))
+  putStrLn "NEW 2 (12,5) (9.28,5)"
+  print $ findContactPoints (reverse [V2 9 4,V2 10 8,V2 14 7,V2 13 3]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 (-0.19) (-0.98))-}
 
   withFontInit $ withImgInit $ withWindow "racie 0.0.1.1" $ \window -> do
       currentTicks <- getTicks
-      stdFont <- SDLTtf.openFont "mediaDir/font.ttf" 15
-      withRenderer window screenWidth screenHeight $ \rend -> void $ runStateT mainLoop (GameStateData rend stdFont currentTicks (fromSeconds 0) initialBodies 1)
+      stdFont <- SDLTtf.openFont (mediaDir </> "font.ttf") 15
+      withRenderer window screenWidth screenHeight $ \rend -> void $ runStateT mainLoop (initialGameState rend stdFont currentTicks)
