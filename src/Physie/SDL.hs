@@ -6,20 +6,38 @@ module Physie.SDL(
   , drawLine
   , isQuitEvent
   , isKeydownEvent
+  , withFontInit
+  , createFontTexture
+  , destroyTexture
   ) where
 
-import Control.Applicative((<$>))
-import           Control.Exception      (bracket, bracket_)
-import           Graphics.UI.SDL.Events     (Event (..), EventData (..))
-import           Graphics.UI.SDL.Keysym     (Keysym (..),
-                                             Scancode (Escape))
-import           Graphics.UI.SDL.Image  as SDLImage
-import Data.Vector.Storable(fromList)
-import qualified Graphics.UI.SDL.Render as SDLR
-import qualified Graphics.UI.SDL.Rect as SDLRect
-import qualified Graphics.UI.SDL.Types  as SDLT
-import qualified Graphics.UI.SDL.Video  as SDLV
-import Linear.V2(V2(..))
+import           Control.Applicative       ((<$>))
+import           Control.Exception         (bracket, bracket_)
+import           Data.Vector.Storable      (fromList)
+import           Graphics.UI.SDL.Events    (Event (..), EventData (..))
+import           Graphics.UI.SDL.Image     as SDLImage
+import           Graphics.UI.SDL.Keysym    (Keysym (..), Scancode (Escape))
+import qualified Graphics.UI.SDL.Rect      as SDLRect
+import qualified Graphics.UI.SDL.Render    as SDLR
+import qualified Graphics.UI.SDL.TTF       as SDLTtf
+import           Graphics.UI.SDL.TTF.Types (TTFFont)
+import qualified Graphics.UI.SDL.Types     as SDLT
+import qualified Graphics.UI.SDL.Video     as SDLV
+import           Linear.V2                 (V2 (..))
+import           Graphics.UI.SDL.Color      (Color (..))
+import           Control.Monad.Trans.Class  (MonadTrans, lift)
+
+createFontTexture ::  (Monad (t IO), MonadTrans t) => SDLT.Renderer -> TTFFont -> String -> Color -> t IO SDLT.Texture
+createFontTexture rend f text color = do
+  surface <- lift $ SDLTtf.renderUTF8Blended f text color
+  lift $ SDLR.createTextureFromSurface rend surface
+
+destroyTexture ::  MonadTrans t => SDLT.Texture -> t IO ()
+destroyTexture t = lift $ SDLR.destroyTexture t
+
+
+withFontInit :: IO a -> IO a
+withFontInit = bracket_ SDLTtf.init SDLTtf.quit
 
 withImgInit :: IO a -> IO a
 withImgInit = bracket_ (SDLImage.init [SDLImage.initPng]) SDLImage.quit
