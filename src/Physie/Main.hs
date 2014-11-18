@@ -30,7 +30,7 @@ import qualified Graphics.UI.SDL.TTF        as SDLTtf
 import           Graphics.UI.SDL.TTF.Types  (TTFFont)
 import qualified Graphics.UI.SDL.Types      as SDLT
 import           Linear.Matrix              ((!*))
-import           Linear.Metric              (dot)
+import           Linear.Metric              (dot,distance)
 import           Linear.V2                  (V2 (..), _x, _y)
 import           Linear.V3                  (V3 (..), cross, _z)
 import           Linear.Vector              ((*^), (^*), (^/))
@@ -113,7 +113,9 @@ rectanglePoints :: V2 Double -> Double -> Rectangle -> [V2 Double]
 rectanglePoints (V2 x y) rot (Rectangle w h) = (to2 . (rmatrix !*) . to3) <$> points
   where hw = w/2
         hh = h/2
-        points = reverse [V2 (x-hw) (y-hh),V2 (x-hw) (y+hh),V2 (x+hw) (y+hh),V2 (x+hw) (y-hh)]
+        --points = reverse [V2 (x-hw) (y-hh),V2 (x-hw) (y+hh),V2 (x+hw) (y+hh),V2 (x+hw) (y-hh)]
+        -- FIXME
+        points = [V2 (x-hw) (y-hh),V2 (x-hw) (y+hh),V2 (x+hw) (y+hh),V2 (x+hw) (y-hh)]
         r00 = cos rot
         r01 = -(sin rot)
         r10 = sin rot
@@ -219,8 +221,8 @@ satIntersectsBodies :: RigidBody -> RigidBody -> Maybe (V2 Double)
 satIntersectsBodies a b = case satIntersects (bodyLines a) (bodyLines b) of
   Nothing -> Nothing
   Just p -> Just $ if ((a ^. bodyPosition) - (b ^. bodyPosition)) `dot` p < 0
-                   then negate p
-                   else p
+                   then p
+                   else negate p
 
 findSupportPoints :: V2 Double -> [V2 Double] -> [V2 Double]
 findSupportPoints n vs = let dots = (`dot` n) <$> vs
@@ -240,7 +242,7 @@ drawPoint p = do
 
 updateTimeMultiplier :: [Event] -> Double -> Double
 updateTimeMultiplier es oldTimeMultiplier
-  | any (`isKeydownEvent` LeftControl) es = oldTimeMultiplier - 0.1
+  | any (`isKeydownEvent` LeftControl) es = max 0 $ oldTimeMultiplier - 0.1
   | any (`isKeydownEvent` LeftShift) es = oldTimeMultiplier + 0.1
   | otherwise = oldTimeMultiplier
 
@@ -280,6 +282,7 @@ mainLoop = do
   sdlSetRenderDrawColor colorsWhite
   oldBodies <- use bodies
   mapM_ drawBody oldBodies
+  mapM_ (lift . print) oldBodies
   let simulationResult = iterate (simulationStep maxDelta . view simStepBodies) (SimulationStep [] oldBodies)
   bodies .= view simStepBodies (simulationResult !! iterations)
   let points = concatMap (view simStepCollPoints) (take (iterations+1) simulationResult)
@@ -319,7 +322,8 @@ unorderedPairs input = let ts = tails input
 
 generateCollisionData :: RigidBody -> RigidBody -> Maybe Collision
 generateCollisionData a b = satIntersectsBodies a b >>= helper
-  where helper n = case findContactPoints (reverse (a ^. bodyPoints)) (reverse (b ^. bodyPoints)) ((-1) *^ n) of
+   --  where helper n = case findContactPoints (reverse (a ^. bodyPoints)) (reverse (b ^. bodyPoints)) ((-1) *^ n) of
+   where helper n = case findContactPoints (a ^. bodyPoints) (b ^. bodyPoints) n of
                     [] -> Nothing
                     xs -> Just $ Collision xs n
 --generateCollisionData a b = (\n -> Collision (findContactPoints (a ^. bodyPoints) (b ^. bodyPoints) n) n) <$> satIntersectsBodies a b
@@ -400,16 +404,93 @@ initialBodies = [
 initialGameState :: SDLT.Renderer -> TTFFont -> TimeTicks -> GameStateData
 initialGameState rend stdFont currentTicks = GameStateData rend stdFont currentTicks (fromSeconds 0) initialBodies 1 0 []
 
+firstCpTest =
+  let [cp1,cp2] = findContactPoints [V2 8 4,V2 14 4,V2 14 9,V2 8 14] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
+  in if cp1 `distance` V2 12 5 > 0.1 || cp2 `distance` V2 8 5 > 0.1
+        then putStrLn ("Error in test 1: " <> show cp1 <> ", " <> show cp2) >> return False
+        else return True
+
+secondCpTest =
+  let [cp1] = findContactPoints (reverse [V2 2 8,V2 5 11,V2 9 7,V2 6 4]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 0 (-1))
+  in if cp1 `distance` V2 6 4 > 0.1
+        then putStrLn ("Error in test 2: " <> show cp1) >> return False
+        else return True
+
+thirdCpTest =
+  let [cp1,cp2] = findContactPoints (reverse [V2 9 4,V2 10 8,V2 14 7,V2 13 3]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 (-0.19) (-0.98))
+  in if cp1 `distance` V2 12 5 > 0.1 || cp2 `distance` V2 9.28 5 > 0.1
+        then putStrLn ("Error in test 3: " <> show cp1 <> ", " <> show cp2) >> return False
+        else return True
+
+gcTest = let Just gd = generateCollisionData testBody1 testBody2
+             testBody1 = RigidBody {
+                              _bodyPosition = V2 271.6679159090139 96.937339727378
+                            , _bodyRotation = 8.327353346932248e-2
+                            , _bodyLinearVelocity = V2 55.54508644587681 (-2.0502524606742365)
+                            , _bodyAngularVelocity = 7.142699621333083e-2
+                            , _bodyLinearForce = V2 100 0
+                            , _bodyTorque = V2 0 0
+                            , _bodyMass = Just 10
+                            , _bodyShape = Rectangle 100 100
+                            }
+             testBody2 = RigidBody {
+                              _bodyPosition = V2 365.9708409098729 180.626602726224
+                            , _bodyRotation = -0.127302834111011
+                            , _bodyLinearVelocity = V2 49.549135541237824 20.502524606742373
+                            , _bodyAngularVelocity = -0.36039209074250184
+                            , _bodyLinearForce = V2 100 0
+                            , _bodyTorque = V2 0 0
+                            , _bodyMass = Just 10
+                            , _bodyShape = Rectangle 100 100
+                            }
+         in if ((gd ^. collContactPoints) !! 0) `distance` (V2 310.02748096777106 137.37916952622425) > 0.1 || ((gd ^. collContactPoints) !! 1) `distance` (V2 311.7008164411722 150.4526123847951) > 0.1
+              then putStrLn ("Error in gcTest: " <> show ((gd ^. collContactPoints) !! 0) <> ", " <> show ((gd ^. collContactPoints) !! 1)) >> return False
+              else return True
+
+gcTest2 = let Just gd = generateCollisionData testBody1 testBody2
+              testBody1 = RigidBody {
+                              _bodyPosition = V2 211.95905202966665 99.27362428995211
+                            , _bodyRotation = -2.049046059942099e-2
+                            , _bodyLinearVelocity = V2 45.52994180413638 (-1.6701725940347658)
+                            , _bodyAngularVelocity = -4.715452921640557e-2
+                            , _bodyLinearForce = V2 100 0
+                            , _bodyTorque = V2 0 0
+                            , _bodyMass = Just 10
+                            , _bodyShape = Rectangle 100 100
+                            }
+              testBody2 = RigidBody {
+                              _bodyPosition = V2 313.3194797033412 157.26375710047827
+                            , _bodyRotation = 0.6790267257789174
+                            , _bodyLinearVelocity = V2 30.700581958640683 16.70172594034766
+                            , _bodyAngularVelocity = 0.4124546372446798
+                            , _bodyLinearForce = V2 100 0
+                            , _bodyTorque = V2 0 0
+                            , _bodyMass = Just 10
+                            , _bodyShape = Rectangle 100 100
+                            }
+         in if ((gd ^. collContactPoints) !! 0) `distance` (V2 262.9730072614697 148.23867684386641) > 0.1
+              then putStrLn ("Error in gcTest: " <> show ((gd ^. collContactPoints) !! 0)) >> return False
+              else return True
+
+unitTests :: IO Bool
+unitTests = and <$> sequence [gcTest2]
+--unitTests = and <$> sequence [firstCpTest,secondCpTest,thirdCpTest,gcTest]
+
 main :: IO ()
 main = do
+  testResult <- unitTests
+  when testResult $ putStrLn "Tests passed"
+  unless testResult $ putStrLn "Tests failed"
+  print $ rectangleLines (V2 150 150) (-1.57) (Rectangle 50 50)
 {-  putStrLn "OLD (12,5) (8,5)"
   print $ findContactPoints [V2 8 4,V2 14 4,V2 14 9,V2 8 14] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
   putStrLn "NEW (6,4)"
   print $ findContactPoints (reverse [V2 2 8,V2 5 11,V2 9 7,V2 6 4]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 0 (-1))
   putStrLn "NEW 2 (12,5) (9.28,5)"
   print $ findContactPoints (reverse [V2 9 4,V2 10 8,V2 14 7,V2 13 3]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 (-0.19) (-0.98))-}
+--   print $ generateCollisionData testBody1 testBody2
 
-  withFontInit $ withImgInit $ withWindow "racie 0.0.1.1" $ \window -> do
-      currentTicks <- getTicks
-      stdFont <- SDLTtf.openFont (mediaDir </> "font.ttf") 15
-      withRenderer window screenWidth screenHeight $ \rend -> void $ runStateT mainLoop (initialGameState rend stdFont currentTicks)
+--   withFontInit $ withImgInit $ withWindow "racie 0.0.1.1" $ \window -> do
+--       currentTicks <- getTicks
+--       stdFont <- SDLTtf.openFont (mediaDir </> "font.ttf") 15
+--       withRenderer window screenWidth screenHeight $ \rend -> void $ runStateT mainLoop (initialGameState rend stdFont currentTicks)

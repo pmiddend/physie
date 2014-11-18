@@ -12,12 +12,14 @@ import           Linear.Vector ((*^))
 import           Physie.Line
 import           Physie.List   (boolToList, maximumByNeighbors)
 
+-- Everything here courtesy of http://www.codezealot.org/archives/394
+
 traceShowId :: Show a => String -> a -> a
 traceShowId prefix a = trace (prefix <> show a) a
 
-findBestEdge :: (Num a, Num (f a), Ord (f a), Ord a, Metric f) => [f a] -> f a -> (f a, Line (f a))
+findBestEdge :: (Num a, Num (f a), Ord (f a), Ord a, Floating a,Metric f) => [f a] -> f a -> (f a, Line (f a))
 findBestEdge ls n = let (v0,v,v1) = maximumByNeighbors (comparing (n `dot`)) ls
-                    in if (v - v0) `dot` n <= (v - v1) `dot` n
+                    in if signorm (v - v0) `dot` n <= signorm (v - v1) `dot` n
                        then (v,Line v0 v)
                        else (v,Line v v1)
 
@@ -29,8 +31,8 @@ clip v1 v2 n o = let d1 = n `dot` v1 - o
                     boolToList (d2 >= 0) v2 <>
                     boolToList (d1 * d2 < 0) (v1 + (d1 / (d1 - d2)) *^ e)
 
-{- Debugged
-findContactPoints :: (Fractional a, Ord a, Show a) => [V2 a] -> [V2 a] -> V2 a -> [V2 a]
+-- Debugged
+findContactPoints :: (Floating a, Ord a, Show a) => [V2 a] -> [V2 a] -> V2 a -> [V2 a]
 findContactPoints a b n =
   let e1 = traceShowId "best edge 1: " $ findBestEdge (traceShowId "a: " a) (traceShowId "n: " n)
       e2 = traceShowId "best edge 2: " $ findBestEdge (traceShowId "b: " b) (-n)
@@ -47,8 +49,7 @@ findContactPoints a b n =
       refNormMax = traceShowId "refNormMax: " $ refNorm `dot` fst ref
   in  boolToList (refNorm `dot` cp2 - refNormMax >= 0) cp2 <>
       boolToList (refNorm `dot` cp3 - refNormMax >= 0) cp3
-      -}
-findContactPoints :: (Fractional a, Ord a, Show a) => [V2 a] -> [V2 a] -> V2 a -> [V2 a]
+{-findContactPoints :: (Floating a, Ord a, Show a) => [V2 a] -> [V2 a] -> V2 a -> [V2 a]
 findContactPoints a b n =
   let e1 = findBestEdge a n
       e2 = findBestEdge b (-n)
@@ -64,4 +65,4 @@ findContactPoints a b n =
       refNorm = (if e1Smaller then 1 else -1) *^ perp nref
       refNormMax = refNorm `dot` view _1 ref
   in  boolToList (refNorm `dot` cp2 - refNormMax >= 0) cp2 <>
-      boolToList (refNorm `dot` cp3 - refNormMax >= 0) cp3
+      boolToList (refNorm `dot` cp3 - refNormMax >= 0) cp3-}
