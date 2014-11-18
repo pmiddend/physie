@@ -145,7 +145,7 @@ screenHeight = 480
 data ConsoleMessage = ConsoleMessage {
     _conMesText  :: String
   , _conMesStart :: TimeTicks
-  }
+  } deriving Show
 
 $(makeLenses ''ConsoleMessage)
 
@@ -165,6 +165,12 @@ $(makeLenses ''GameStateData)
 type GameState a = StateT GameStateData IO a
 
 data TextPosition = LeftTop | LeftBottom | RightTop | RightBottom
+
+trimConsoleMessages :: GameState ()
+trimConsoleMessages = do
+  t <- use ticks
+  consoleMessages %= filter (\cm -> t `tickDelta` view conMesStart cm < fromSeconds 0.5)
+  return ()
 
 textSize :: String -> GameState (V2 Int)
 textSize s = do
@@ -202,7 +208,7 @@ createAndRenderSingleLine color text position = do
   size <- sizeText f text
   lift $ SDLR.renderCopy rend texture Nothing (Just $ SDLRect.Rect (position ^. _x) (position ^. _y) (size ^. _x) (size ^. _y))
   destroyTexture texture
-  return (V2 0 (size ^. _y))
+  return (V2 0 ((position + size) ^. _y))
 
 drawBody :: RigidBody -> GameState ()
 drawBody b = do
@@ -265,7 +271,7 @@ mainLoop = do
   oldtm <- use timeMultiplier
   timeMultiplier %= updateTimeMultiplier events
   newtm <- use timeMultiplier
-  when (newtm /= oldtm) (consoleMessages %= ([ConsoleMessage "time changed" newTicks] ++))
+  when (newtm /= oldtm) (consoleMessages %= ([ConsoleMessage ("time changed to " <> show newtm) newTicks] ++))
   let delta = fromSeconds $ newtm * toSeconds delta'
   let (iterations,newDelta) = splitDelta (oldDelta + delta)
   prevDelta .= newDelta
@@ -281,9 +287,10 @@ mainLoop = do
   mapM_ drawPoint points
   contactPointSum += length points
   cpsum <- use contactPointSum
-  createAndRenderTextRelative ("cps: " <> show cpsum <> "\n" <> "lol") colorsWhite LeftTop
+  createAndRenderTextRelative ("cps: " <> show cpsum) colorsWhite LeftTop
   cms <- use consoleMessages
   createAndRenderTextRelative (unlines . map (view conMesText) $ cms) colorsWhite LeftBottom
+  trimConsoleMessages
   sdlRenderPresent
   unless (any isQuitEvent events) mainLoop
 
@@ -339,7 +346,6 @@ angularFunction cp a b n nom denomb =
       n3 = toV3 n 0
   in (angularvf a ra,angularvf b rb)
 
--- TODO: Hier einfach cps zurückgeben zusätzlich zur Funktion, und das dann mit drawPoint zeichnen lassen (und die Normale ggf. auch)
 processCollision :: (Ixed c, IxValue c ~ RigidBody) => ((Index c, RigidBody), (Index c, RigidBody), Collision) -> c -> c
 processCollision ((ixa,a),(ixb,b),colldata) = let e = 0.1
                                                   cps = colldata ^. collContactPoints
