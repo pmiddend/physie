@@ -9,6 +9,7 @@ module Physie.SDL(
   , withFontInit
   , createFontTexture
   , destroyTexture
+  , sizeText
   ) where
 
 import           Control.Applicative       ((<$>))
@@ -35,6 +36,8 @@ createFontTexture rend f text color = do
 destroyTexture ::  MonadTrans t => SDLT.Texture -> t IO ()
 destroyTexture t = lift $ SDLR.destroyTexture t
 
+sizeText :: (Monad (t IO),Functor (t IO), MonadTrans t) => TTFFont -> String -> t IO (V2 Int)
+sizeText font text = uncurry V2 <$> lift (SDLTtf.sizeText font text)
 
 withFontInit :: IO a -> IO a
 withFontInit = bracket_ SDLTtf.init SDLTtf.quit

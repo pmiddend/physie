@@ -15,7 +15,7 @@ import           Control.Monad.Loops        (unfoldM)
 import           Control.Monad.State.Strict (StateT, runStateT)
 import           Control.Monad.Trans.Class  (MonadTrans, lift)
 import           Data.Foldable              (foldMap)
-import           Data.List                  (tails)
+import           Data.List                  (tails,maximum)
 import           Data.Maybe                 (fromJust, isJust, mapMaybe)
 import           Data.Monoid                (Endo (Endo), appEndo, (<>))
 import           Data.Traversable           (traverse)
@@ -43,7 +43,7 @@ import           Physie.SDL                 (createFontTexture, destroyTexture,
                                              drawLine, isKeydownEvent,
                                              isQuitEvent, withFontInit,
                                              withImgInit, withRenderer,
-                                             withWindow)
+                                             withWindow,sizeText)
 import           Physie.Time                (TimeDelta, TimeTicks, fromSeconds,
                                              getTicks, tickDelta, toSeconds)
 import           System.FilePath
@@ -166,11 +166,16 @@ type GameState a = StateT GameStateData IO a
 
 data TextPosition = LeftTop | LeftBottom | RightTop | RightBottom
 
+textSize :: String -> GameState (V2 Int)
+textSize s = do
+  f <- use font
+  sizes <- mapM (sizeText f) (lines s)
+  return $ V2 (maximum . map (view _x) $ sizes) (sum . map (view _y) $ sizes)
+
 createAndRenderTextRelative :: String -> Color -> TextPosition -> GameState ()
 createAndRenderTextRelative [] _ _ = return ()
 createAndRenderTextRelative text color position = do
-  f <- use font
-  (width, height) <- lift $ SDLTtf.sizeText f text
+  (V2 width height) <- textSize text
   let realPosition = case position of
                         LeftTop -> V2 0 0
                         LeftBottom -> V2 0 (screenHeight - height)
@@ -178,15 +183,26 @@ createAndRenderTextRelative text color position = do
                         RightBottom -> V2 (screenWidth - width) (screenHeight - height)
   createAndRenderText text color (fromIntegral <$> realPosition)
 
+feedbackFold :: Monad m => (a -> b -> m b) -> [a] -> b -> m ()
+feedbackFold _ [] _ = return ()
+feedbackFold f (x:xs) s = f x s >>= feedbackFold f xs
+
 createAndRenderText :: String -> Color -> V2 Double -> GameState ()
-createAndRenderText [] _ _ = return ()
-createAndRenderText text color position = do
+createAndRenderText text color position = feedbackFold (createAndRenderSingleLine color) (lines text) (toIntPoint position)
+
+createAndRenderSingleLine :: Color -> String -> V2 Int -> GameState (V2 Int)
+createAndRenderSingleLine _ [] _ = do
+  f <- use font
+  h <- lift $ SDLTtf.getFontHeight f
+  return $ V2 0 h
+createAndRenderSingleLine color text position = do
   f <- use font
   rend <- use renderer
   texture <- createFontTexture rend f text color
-  (width, height) <- lift $ SDLTtf.sizeText f text
-  lift $ SDLR.renderCopy rend texture Nothing (Just $ SDLRect.Rect (floor (position ^. _x)) (floor (position ^. _y)) width height)
+  size <- sizeText f text
+  lift $ SDLR.renderCopy rend texture Nothing (Just $ SDLRect.Rect (position ^. _x) (position ^. _y) (size ^. _x) (size ^. _y))
   destroyTexture texture
+  return (V2 0 (size ^. _y))
 
 drawBody :: RigidBody -> GameState ()
 drawBody b = do
@@ -265,7 +281,7 @@ mainLoop = do
   mapM_ drawPoint points
   contactPointSum += length points
   cpsum <- use contactPointSum
-  createAndRenderTextRelative ("cps: " <> show cpsum) colorsWhite LeftTop
+  createAndRenderTextRelative ("cps: " <> show cpsum <> "\n" <> "lol") colorsWhite LeftTop
   cms <- use consoleMessages
   createAndRenderTextRelative (unlines . map (view conMesText) $ cms) colorsWhite LeftBottom
   sdlRenderPresent
