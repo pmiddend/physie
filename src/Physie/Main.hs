@@ -351,7 +351,7 @@ angularFunction cp a b n nom denomb =
   in (angularvf a ra,angularvf b rb)
 
 processCollision :: (Ixed c, IxValue c ~ RigidBody) => ((Index c, RigidBody), (Index c, RigidBody), Collision) -> c -> c
-processCollision ((ixa,a),(ixb,b),colldata) = let e = 0.1
+processCollision ((ixa,a),(ixb,b),colldata) = let e = 1.0
                                                   cps = colldata ^. collContactPoints
                                                   n = colldata ^. collNormal
                                                   va = a ^. bodyLinearVelocity
@@ -394,7 +394,7 @@ initialBodies = [
             , _bodyRotation = 0.5
             , _bodyLinearVelocity = V2 0 0
             , _bodyAngularVelocity = 0
-            , _bodyLinearForce = V2 0 0
+            , _bodyLinearForce = V2 (-100) 0
             , _bodyTorque = V2 0 0
             , _bodyMass = Just 1
             , _bodyShape = Rectangle 100 100
@@ -478,9 +478,9 @@ unitTests = and <$> sequence [firstCpTest,secondCpTest,thirdCpTest,gcTest,gcTest
 
 main :: IO ()
 main = do
-  testResult <- unitTests
-  when testResult $ putStrLn "Tests passed"
-  unless testResult $ putStrLn "Tests failed"
+--   testResult <- unitTests
+--   when testResult $ putStrLn "Tests passed"
+--   unless testResult $ putStrLn "Tests failed"
   print $ rectangleLines (V2 150 150) (-1.57) (Rectangle 50 50)
 {-  putStrLn "OLD (12,5) (8,5)"
   print $ findContactPoints [V2 8 4,V2 14 4,V2 14 9,V2 8 14] [V2 4 2,V2 12 2,V2 12 5,V2 4 5] (V2 0 (-1))
@@ -490,7 +490,7 @@ main = do
   print $ findContactPoints (reverse [V2 9 4,V2 10 8,V2 14 7,V2 13 3]) [V2 4 2,V2 4 5,V2 12 5,V2 12 2] (V2 (-0.19) (-0.98))-}
 --   print $ generateCollisionData testBody1 testBody2
 
---   withFontInit $ withImgInit $ withWindow "racie 0.0.1.1" $ \window -> do
---       currentTicks <- getTicks
---       stdFont <- SDLTtf.openFont (mediaDir </> "font.ttf") 15
---       withRenderer window screenWidth screenHeight $ \rend -> void $ runStateT mainLoop (initialGameState rend stdFont currentTicks)
+  withFontInit $ withImgInit $ withWindow "racie 0.0.1.1" $ \window -> do
+      currentTicks <- getTicks
+      stdFont <- SDLTtf.openFont (mediaDir </> "font.ttf") 15
+      withRenderer window screenWidth screenHeight $ \rend -> void $ runStateT mainLoop (initialGameState rend stdFont currentTicks)
