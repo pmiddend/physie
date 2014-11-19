@@ -9,6 +9,8 @@ module Physie.Line(
 import           Linear.Metric (signorm)
 import           Linear.V2     (V2, perp)
 
+-- FIXME: Lenses
+
 data Line a = Line a a deriving Show
 
 lineVector :: Num a => Line a -> a
@@ -21,4 +23,4 @@ lineEnd :: Line t -> t
 lineEnd (Line _ b) = b
 
 lineNormal :: Floating a => Line (V2 a) -> V2 a
-lineNormal (Line a b) = perp .  signorm $ b - a
+lineNormal = perp .  signorm . lineVector

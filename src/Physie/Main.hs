@@ -473,8 +473,8 @@ gcTest2 = let Just gd = generateCollisionData testBody1 testBody2
               else return True
 
 unitTests :: IO Bool
-unitTests = and <$> sequence [gcTest2]
---unitTests = and <$> sequence [firstCpTest,secondCpTest,thirdCpTest,gcTest]
+-- unitTests = and <$> sequence [gcTest]
+unitTests = and <$> sequence [firstCpTest,secondCpTest,thirdCpTest,gcTest,gcTest2]
 
 main :: IO ()
 main = do
